@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-import torchvision.models as models
 from torchvision.io import read_image
 from PIL.Image import Image
 import os
@@ -23,11 +22,6 @@ CUR_DIR = os.path.dirname(__file__)
 CACHE_DIR = os.path.join(CUR_DIR, "data/")
 # set cache directory for saving pretrained model;
 torch.hub.set_dir(CACHE_DIR)
-
-
-def load_model(name: str, pretrained: bool=False) -> torch.Tensor:
-    assert torch.hub.get_dir() == CACHE_DIR
-    return exec(f"models.{name}(pretrained={pretrained})")
 
 
 def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False) -> torch.Tensor:
