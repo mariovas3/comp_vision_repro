@@ -24,13 +24,14 @@ CACHE_DIR = os.path.join(CUR_DIR, "data/")
 torch.hub.set_dir(CACHE_DIR)
 
 
-def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False) -> torch.Tensor:
+def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False, shape: tuple=None) -> torch.Tensor:
     img = read_image(path)  # gives torch.uint8 type tensor;
     img_dims = img.shape  # dimensions for tensor are in (C, H, W) format;
     if apply_transform:
         if transform is None:
+            shape = (720, 1080) if shape is None else shape
             transform = nn.Sequential(
-                        T.Resize((720, 1080)),  # change height to 720p and width to 1080p;
+                        T.Resize(shape),  # change height to 720p and width to 1080p;
                         T.ConvertImageDtype(torch.float32),  # pretrained models take tensor images with values in [0, 1];
                         T.Normalize(**MAGIC_NUMBERS)  # then standardise to be consistent with ImageNet input;
                     )
