@@ -31,7 +31,7 @@ def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False
         if transform is None:
             shape = (720, 1080) if shape is None else shape
             transform = nn.Sequential(
-                        T.Resize(shape),  # change height to 720p and width to 1080p;
+                        T.Resize(shape),
                         T.ConvertImageDtype(torch.float32),  # pretrained models take tensor images with values in [0, 1];
                         T.Normalize(**MAGIC_NUMBERS)  # then standardise to be consistent with ImageNet input;
                     )
@@ -40,7 +40,7 @@ def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False
 
 
 def tensor_to_pil(img: torch.Tensor, back_transform: nn.Module=None, apply_transform: bool=False) -> Image:
-    img = img.detach().clone()  # don't touch the actual image as it may be still in training loop;
+    img = img.detach().clone()  # don't touch the actual image as it may be still training;
     if apply_transform:
         if back_transform is None:
             back_transform = nn.Sequential(
