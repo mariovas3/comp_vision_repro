@@ -7,5 +7,4 @@
 * The style image is the starry night. The content image is a photo of houses in Copenhagen I took while on holidays.
 
 
-![alt text](https://github.com/mariovas3/comp_vision_repro/tree/master/style_transfer_repro/data/images/houses_denmark_540p_350iter.jpg)
-
+![alt text](https://github.com/mariovas3/comp_vision_repro/blob/master/style_transfer_repro/data/images/houses_denmark_540p_350iter.jpg)
