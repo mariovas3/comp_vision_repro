@@ -40,7 +40,7 @@ def load_image(path: str, transform: nn.Module=None, apply_transform: bool=False
 
 
 def tensor_to_pil(img: torch.Tensor, back_transform: nn.Module=None, apply_transform: bool=False) -> Image:
-    img = img.detach().clone()  # don't touch the actual image as it may be still training;
+    img = img.to("cpu").detach().squeeze().clone()  # don't touch the actual image as it may be still training;
     if apply_transform:
         if back_transform is None:
             back_transform = nn.Sequential(
