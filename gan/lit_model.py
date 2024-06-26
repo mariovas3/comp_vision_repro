@@ -66,11 +66,9 @@ class LitGan(L.LightningModule):
             dist_from_optimum = -(real_loss + fake_loss) - math.log(1 / 4)
             self.log("gan_obj_minus_log025", dist_from_optimum.item())
 
-    def on_train_epoch_start(self):
+    def on_train_epoch_end(self):
         imgs = self(8).detach()
-        imgs = wandb.Image(
-            imgs, caption=f"start of epoch: {self.current_epoch}"
-        )
+        imgs = wandb.Image(imgs, caption=f"end of epoch: {self.current_epoch}")
         wandb.log({"generator_samples": imgs})
 
     def training_step(self, batch):
@@ -112,32 +110,32 @@ class LitGan(L.LightningModule):
                 )
             optimG.step()
             self.untoggle_optimizer(optimG)
-        else:
-            # train discriminator;
-            # track only params of D;
-            self.toggle_optimizer(optimizer=optimD)
-            optimD.zero_grad()
-            # get probs of x being real;
-            out_probs_x = self.D(x)
-            # get mean(-log(D(x)))
-            real_target = torch.ones((len(out_probs_x), 1), device=self.device)
-            real_loss = F.binary_cross_entropy(
-                input=out_probs_x,
-                target=real_target,
-            )
-            # get probs of G(z) being real;
-            out_probs_fake = self.D(self.G(z).detach())
-            # get mean(- log(1 - D(G(z))))
-            fake_target = torch.zeros(
-                (len(out_probs_fake), 1), device=self.device
-            )
-            fake_loss = F.binary_cross_entropy(
-                input=out_probs_fake,
-                target=fake_target,
-            )
-            # arithmetic avg the have similar scale to generator_loss;
-            loss = (real_loss + fake_loss) / 2
-            self.log("discriminator_loss", loss.item())
-            self.manual_backward(loss)
-            optimD.step()
-            self.untoggle_optimizer(optimD)
+
+        # train discriminator;
+        # track only params of D;
+        self.toggle_optimizer(optimizer=optimD)
+        optimD.zero_grad()
+        # get probs of x being real;
+        out_probs_x = self.D(x)
+        # get mean(-log(D(x)))
+        real_targets = torch.ones((len(out_probs_x), 1), device=self.device)
+        real_loss = F.binary_cross_entropy(
+            input=out_probs_x,
+            target=real_targets,
+        )
+        # get probs of G(z) being real;
+        out_probs_fake = self.D(self.G(z).detach())
+        # get mean(- log(1 - D(G(z))))
+        fake_targets = torch.zeros(
+            (len(out_probs_fake), 1), device=self.device
+        )
+        fake_loss = F.binary_cross_entropy(
+            input=out_probs_fake,
+            target=fake_targets,
+        )
+        # arithmetic avg the have similar scale to generator_loss;
+        loss = (real_loss + fake_loss) / 2
+        self.log("discriminator_loss", loss.item())
+        self.manual_backward(loss)
+        optimD.step()
+        self.untoggle_optimizer(optimD)

@@ -47,18 +47,33 @@ trainer:
   reload_dataloaders_every_n_epochs: 0
   default_root_dir: null
 model:
-  latent_dim: 8
+  latent_dim: 64
   lr: 1e-3
   num_discriminator_grad_steps: 5
   cfg:
     generator:
-      n_hidden: 2
+      n_hidden: 5
       hidden_dim: 128
       out_shape: [1, 28, 28]
   num_latents_to_sample: null
   gradient_clip_val: null
   gradient_clip_algorithm: norm
 data:
-  batch_size: 64
+  batch_size: 128
   num_workers: 1
+my_model_checkpoint:
+  dirpath: null
+  filename: null
+  monitor: null
+  verbose: false
+  save_last: null
+  save_top_k: 1
+  save_weights_only: false
+  mode: min
+  auto_insert_metric_name: true
+  every_n_train_steps: null
+  train_time_interval: null
+  every_n_epochs: 50
+  save_on_train_epoch_end: null
+  enable_version_counter: true
 ckpt_path: null
