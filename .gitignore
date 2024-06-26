@@ -9,3 +9,4 @@ notebooks
 *.zip
 data/downloaded
 data/processed
+data/*/raw
