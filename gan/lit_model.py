@@ -44,9 +44,9 @@ class LitGan(L.LightningModule):
         return self.G(z)
 
     def on_train_batch_end(self, outputs, batch: torch.Any, batch_idx: int):
-        kp1 = self.num_discriminator_grad_steps + 1
+        k = self.num_discriminator_grad_steps
         # log this after every generator grad step;
-        if (self.trainer.global_step + 1) % kp1 == 0:
+        if (self.trainer.global_step + 1) % k == 0:
             x, _ = batch
             latent_batch_size = self.num_latents_to_sample or len(x)
             z = torch.randn(
@@ -81,36 +81,6 @@ class LitGan(L.LightningModule):
         z = torch.randn(
             (latent_batch_size, self.hparams.latent_dim), device=self.device
         )
-        kp1 = self.num_discriminator_grad_steps + 1
-        if (self.trainer.global_step + 1) % kp1 == 0:
-            # train generator;
-            # tell lightning to only track grads for
-            # the params of the optimiser passed to
-            # toggle_optimizer;
-            self.toggle_optimizer(optimizer=optimG)
-            optimG.zero_grad()
-            # get probs that G(z) is a real datapoint;
-            out_probs = self.D(self.G(z))
-            # want to trick D that G(z) are real;
-            targets = torch.ones((len(out_probs), 1), device=self.device)
-            # get Binary Cross Entropy = - log(D(G(z)))
-            loss = F.binary_cross_entropy(input=out_probs, target=targets)
-            self.log("generator_loss", loss.item())
-            # safe way to do backward so that lightning
-            # can handle mixed precision training;
-            self.manual_backward(loss)
-            # check if should clip grads of Generator;
-            # here I do it manually bc configure_gradient_clipping()
-            # won’t be called in Manual Optimization
-            if self.gradient_clip_val is not None:
-                self.clip_gradients(
-                    optimG,
-                    gradient_clip_val=self.gradient_clip_val,
-                    gradient_clip_algorithm=self.gradient_clip_algorithm,
-                )
-            optimG.step()
-            self.untoggle_optimizer(optimG)
-
         # train discriminator;
         # track only params of D;
         self.toggle_optimizer(optimizer=optimD)
@@ -139,3 +109,33 @@ class LitGan(L.LightningModule):
         self.manual_backward(loss)
         optimD.step()
         self.untoggle_optimizer(optimD)
+
+        k = self.num_discriminator_grad_steps
+        if (self.trainer.global_step + 1) % k == 0:
+            # train generator;
+            # tell lightning to only track grads for
+            # the params of the optimiser passed to
+            # toggle_optimizer;
+            self.toggle_optimizer(optimizer=optimG)
+            optimG.zero_grad()
+            # get probs that G(z) is a real datapoint;
+            out_probs = self.D(self.G(z))
+            # want to trick D that G(z) are real;
+            targets = torch.ones((len(out_probs), 1), device=self.device)
+            # get Binary Cross Entropy = - log(D(G(z)))
+            loss = F.binary_cross_entropy(input=out_probs, target=targets)
+            self.log("generator_loss", loss.item())
+            # safe way to do backward so that lightning
+            # can handle mixed precision training;
+            self.manual_backward(loss)
+            # check if should clip grads of Generator;
+            # here I do it manually bc configure_gradient_clipping()
+            # won’t be called in Manual Optimization
+            if self.gradient_clip_val is not None:
+                self.clip_gradients(
+                    optimG,
+                    gradient_clip_val=self.gradient_clip_val,
+                    gradient_clip_algorithm=self.gradient_clip_algorithm,
+                )
+            optimG.step()
+            self.untoggle_optimizer(optimG)

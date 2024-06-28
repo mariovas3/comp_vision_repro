@@ -1,5 +1,6 @@
 import math
 
+import torch
 from torch import nn
 
 
@@ -22,7 +23,9 @@ class GeneratorMLP(nn.Module):
         self.net.add_module(f"out_layer", nn.Linear(hidden_dim, self.out_dim))
 
     def forward(self, x):
-        return self.net(x).view(-1, self.n_channels, self.height, self.width)
+        return torch.tanh(self.net(x)).view(
+            -1, self.n_channels, self.height, self.width
+        )
 
 
 class DiscriminatorCNN(nn.Module):
