@@ -48,13 +48,25 @@ trainer:
   default_root_dir: null
 model:
   latent_dim: 64
-  lr: 1e-3
-  num_discriminator_grad_steps: 5
+  lr: 2e-4
+  betas: [0.5, 0.999]
+  num_discriminator_grad_steps: 1
   cfg:
     generator:
-      n_hidden: 5
-      hidden_dim: 128
-      out_shape: [1, 28, 28]
+      Hout: 28
+      Wout: 28
+      out_channels: [16, 32, 64, 1]
+      kernels: [3, 3, 3, 3]
+      paddings: [0, 1, 1, 1]
+      strides: [1, 1, 1, 1]
+    discriminator:
+      Cin: 1
+      Hin: 28
+      Win: 28
+      out_channels: [64, 32, 16]
+      kernels: [5, 3, 3]
+      paddings: [0, 0, 0]
+      strides: [2, 2, 2]
   num_latents_to_sample: null
   gradient_clip_val: null
   gradient_clip_algorithm: norm

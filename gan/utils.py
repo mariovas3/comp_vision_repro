@@ -88,6 +88,8 @@ def get_height_width_convtranspose(
 class GeneratorConvTranspose(nn.Module):
     def __init__(
         self,
+        Hout,
+        Wout,
         latent_dim,
         out_channels,
         kernels,
@@ -101,8 +103,10 @@ class GeneratorConvTranspose(nn.Module):
         and then ConvTranspose2d layers expand it to the needed dim.
         """
         super().__init__()
+        self.Cout = out_channels[-1]
+        self.Hout, self.Wout = Hout, Wout
         self.latent_dim = latent_dim
-        out_channels += [self.latent_dim]
+        out_channels = [self.latent_dim] + out_channels
         self.net = nn.Sequential()
         for i in range(len(kernels)):
             self.net.add_module(
@@ -119,15 +123,35 @@ class GeneratorConvTranspose(nn.Module):
                     else output_paddings[i],
                 ),
             )
-            if i < len(kernels) - 1:
-                self.net.add_module(
-                    f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1])
-                )
-                self.net.add_module(f"relu_{i}", nn.ReLU())
+            self.net.add_module(f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1]))
+            self.net.add_module(f"relu_{i}", nn.ReLU())
+        H, W = get_height_width_convtranspose(
+            Hin=1,
+            Win=1,
+            kernels=kernels,
+            paddings=paddings,
+            strides=strides,
+            dilations=dilations,
+            output_paddings=output_paddings,
+        )
+        # this is so I don't have to do too much calculations
+        # for the shapes convtranspose;
+        self.out_layer = nn.Sequential(
+            nn.Flatten(-2),  # flatten the height and width dim;
+            nn.Linear(H * W, Hout * Wout),
+            nn.Tanh(),
+        )
 
     def forward(self, z):
-        assert z.ndim >= 3, "z should be of dim (..., latent_dim, 1, 1)"
-        return torch.tanh(self.net(z))
+        if 4 - z.ndim == 2:
+            z = z[:, :, None, None]
+        assert z.ndim >= 3 and z.shape[-2:] == (
+            1,
+            1,
+        ), "z should be of dim (..., latent_dim, 1, 1)"
+        return self.out_layer(self.net(z)).view(
+            -1, self.Cout, self.Hout, self.Wout
+        )
 
 
 class GeneratorMLP(nn.Module):
@@ -155,22 +179,53 @@ class GeneratorMLP(nn.Module):
 
 
 class DiscriminatorCNN(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        Cin,
+        Hin,
+        Win,
+        out_channels,
+        kernels,
+        paddings,
+        strides,
+        dilations=None,
+    ):
+        """
+        Expecting latent input of shape (..., latent_dim, 1, 1),
+        and then ConvTranspose2d layers expand it to the needed dim.
+        """
         super().__init__()
-        self.net = nn.Sequential(
-            nn.BatchNorm2d(1),  # 28 x 28
-            nn.Conv2d(in_channels=1, out_channels=3, kernel_size=5),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.BatchNorm2d(3),  # 12 x 12
-            nn.Conv2d(in_channels=3, out_channels=5, kernel_size=3),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.BatchNorm2d(5),  # 5 x 5
-            nn.Flatten(),
-            nn.Linear(5**3, 1),
-            nn.Sigmoid(),
+        self.Cin = Cin
+        out_channels = [self.Cin] + out_channels
+        self.net = nn.Sequential()
+        for i in range(len(kernels)):
+            self.net.add_module(
+                f"conv_{i}",
+                nn.Conv2d(
+                    in_channels=out_channels[i],
+                    out_channels=out_channels[i + 1],
+                    kernel_size=kernels[i],
+                    stride=strides[i],
+                    padding=paddings[i],
+                    dilation=1 if dilations is None else dilations[i],
+                ),
+            )
+            self.net.add_module(f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1]))
+            self.net.add_module(
+                f"leaky_relu_{i}", nn.LeakyReLU(0.2, inplace=True)
+            )
+        Hout, Wout = get_height_width_conv(
+            Hin=Hin,
+            Win=Win,
+            kernels=kernels,
+            paddings=paddings,
+            strides=strides,
+            dilations=dilations,
+        )
+        out_in = out_channels[-1] * Hout * Wout
+        self.out_layer = nn.Sequential(
+            nn.Flatten(), nn.Linear(out_in, 1), nn.Sigmoid()
         )
 
     def forward(self, x):
-        return self.net(x)
+        return self.out_layer(self.net(x))
