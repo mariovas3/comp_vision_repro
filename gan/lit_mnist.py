@@ -6,6 +6,11 @@ import torchvision.transforms as T
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
+# non-scriptable transform;
+# scriptable transforms are combined with nn.Sequential
+# and all subtransforms operate on torch.Tensor (not PIL.Image or others);
+MNIST_TRANSFORM = T.Compose([T.ToTensor(), T.Lambda(lambda x: x * 2 - 1)])
+
 
 class MNISTDataModule(L.LightningDataModule):
     def __init__(self, batch_size, num_workers):
@@ -24,7 +29,7 @@ class MNISTDataModule(L.LightningDataModule):
             root=metadata.DATA_PATH,
             train=True,
             download=False,
-            transform=T.ToTensor(),
+            transform=MNIST_TRANSFORM,
         )
 
     def train_dataloader(self):

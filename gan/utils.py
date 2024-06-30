@@ -1,13 +1,52 @@
 import math
 
 import torch
-import torchvision.transforms as T
 from torch import nn
 
-# non-scriptable transform;
-# scriptable transforms are combined with nn.Sequential
-# and all subtransforms operate on torch.Tensor (not PIL.Image or others);
-MNIST_TRANSFORM = T.Compose([T.ToTensor(), T.Lambda(lambda x: x * 2 - 1)])
+
+def conv_dim_formula(in_dim, kernels, paddings, strides, dilations=None):
+    """
+    Calculate final shape of in_dim after successive conv1d operations.
+
+    Args:
+        in_dim (int): input dimension.
+        kernels (Sequence[int]): indexable seq of kernels.
+        paddings (Sequence[int]): indexable seq of padding on both sides.
+        strides (Sequence[int]): indexable seq of strides.
+        dilations (Sequence[int]): indexable seq of dilations.
+            If dilations is None, all dilations assumed to be 1.
+    """
+    assert len(kernels) == len(paddings) == len(strides)
+    if dilations is not None:
+        assert len(kernels) == len(dilations)
+
+    out = in_dim
+    for i in range(len(kernels)):
+        offset = 2 * paddings[i] - kernels[i]
+        if dilations is not None:
+            offset -= (kernels[i] - 1) * (dilations[i] - 1)
+        out = (out + offset) // strides[i] + 1
+    return out
+
+
+def get_height_width_conv(
+    Hin, Win, kernels, paddings, strides, dilations=None
+):
+    Hout = conv_dim_formula(
+        in_dim=Hin,
+        kernels=kernels,
+        paddings=paddings,
+        strides=strides,
+        dilations=dilations,
+    )
+    Wout = conv_dim_formula(
+        in_dim=Win,
+        kernels=kernels,
+        paddings=paddings,
+        strides=strides,
+        dilations=dilations,
+    )
+    return Hout, Wout
 
 
 def conv_transpose_dim_formula(
@@ -44,6 +83,51 @@ def get_height_width_convtranspose(
         output_paddings=output_paddings,
     )
     return Hout, Wout
+
+
+class GeneratorConvTranspose(nn.Module):
+    def __init__(
+        self,
+        latent_dim,
+        out_channels,
+        kernels,
+        paddings,
+        strides,
+        dilations=None,
+        output_paddings=None,
+    ):
+        """
+        Expecting latent input of shape (..., latent_dim, 1, 1),
+        and then ConvTranspose2d layers expand it to the needed dim.
+        """
+        super().__init__()
+        self.latent_dim = latent_dim
+        out_channels += [self.latent_dim]
+        self.net = nn.Sequential()
+        for i in range(len(kernels)):
+            self.net.add_module(
+                f"convt_{i}",
+                nn.ConvTranspose2d(
+                    in_channels=out_channels[i],
+                    out_channels=out_channels[i + 1],
+                    kernel_size=kernels[i],
+                    stride=strides[i],
+                    padding=paddings[i],
+                    dilation=1 if dilations is None else dilations[i],
+                    output_padding=0
+                    if output_paddings is None
+                    else output_paddings[i],
+                ),
+            )
+            if i < len(kernels) - 1:
+                self.net.add_module(
+                    f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1])
+                )
+                self.net.add_module(f"relu_{i}", nn.ReLU())
+
+    def forward(self, z):
+        assert z.ndim >= 3, "z should be of dim (..., latent_dim, 1, 1)"
+        return torch.tanh(self.net(z))
 
 
 class GeneratorMLP(nn.Module):

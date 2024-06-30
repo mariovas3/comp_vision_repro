@@ -7,6 +7,10 @@ from utils import DiscriminatorCNN, GeneratorMLP
 
 import wandb
 
+# this is for reproducibility if using stochastic components
+# like ConvTranspose;
+torch.use_deterministic_algorithms(True)
+
 
 class LitGan(L.LightningModule):
     def __init__(
