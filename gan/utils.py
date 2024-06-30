@@ -123,24 +123,11 @@ class GeneratorConvTranspose(nn.Module):
                     else output_paddings[i],
                 ),
             )
-            self.net.add_module(f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1]))
-            self.net.add_module(f"relu_{i}", nn.ReLU())
-        H, W = get_height_width_convtranspose(
-            Hin=1,
-            Win=1,
-            kernels=kernels,
-            paddings=paddings,
-            strides=strides,
-            dilations=dilations,
-            output_paddings=output_paddings,
-        )
-        # this is so I don't have to do too much calculations
-        # for the shapes convtranspose;
-        self.out_layer = nn.Sequential(
-            nn.Flatten(-2),  # flatten the height and width dim;
-            nn.Linear(H * W, Hout * Wout),
-            nn.Tanh(),
-        )
+            if i < len(kernels) - 1:
+                self.net.add_module(
+                    f"bn_{i}", nn.BatchNorm2d(out_channels[i + 1])
+                )
+                self.net.add_module(f"relu_{i}", nn.ReLU())
 
     def forward(self, z):
         if 4 - z.ndim == 2:
@@ -149,9 +136,7 @@ class GeneratorConvTranspose(nn.Module):
             1,
             1,
         ), "z should be of dim (..., latent_dim, 1, 1)"
-        return self.out_layer(self.net(z)).view(
-            -1, self.Cout, self.Hout, self.Wout
-        )
+        return torch.tanh(self.net(z))
 
 
 class GeneratorMLP(nn.Module):
