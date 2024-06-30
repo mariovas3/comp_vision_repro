@@ -1,7 +1,49 @@
 import math
 
 import torch
+import torchvision.transforms as T
 from torch import nn
+
+# non-scriptable transform;
+# scriptable transforms are combined with nn.Sequential
+# and all subtransforms operate on torch.Tensor (not PIL.Image or others);
+MNIST_TRANSFORM = T.Compose([T.ToTensor(), T.Lambda(lambda x: x * 2 - 1)])
+
+
+def conv_transpose_dim_formula(
+    in_dim, kernels, paddings, strides, dilations=None, output_paddings=None
+):
+    out = in_dim
+    for i in range(len(kernels)):
+        offset = -2 * paddings[i] + kernels[i]
+        if dilations:
+            offset += (kernels[i] - 1) * (dilations[i] - 1)
+        if output_paddings:
+            offset += output_paddings[i]
+        out = (out - 1) * strides[i] + offset
+    return out
+
+
+def get_height_width_convtranspose(
+    Hin, Win, kernels, paddings, strides, dilations=None, output_paddings=None
+):
+    Hout = conv_transpose_dim_formula(
+        in_dim=Hin,
+        kernels=kernels,
+        paddings=paddings,
+        strides=strides,
+        dilations=dilations,
+        output_paddings=output_paddings,
+    )
+    Wout = conv_transpose_dim_formula(
+        in_dim=Win,
+        kernels=kernels,
+        paddings=paddings,
+        strides=strides,
+        dilations=dilations,
+        output_paddings=output_paddings,
+    )
+    return Hout, Wout
 
 
 class GeneratorMLP(nn.Module):
