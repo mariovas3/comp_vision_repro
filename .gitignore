@@ -1,3 +1,12 @@
-env
-style_transfer_repro/__pycache__
-style_transfer_repro/.ipynb_checkpoints
+outputs
+logs
+wandb
+saved_models
+notebooks
+*.ipynb
+*.ipynb_checkpoints
+*__pycache__
+*.zip
+data/downloaded
+data/processed
+data/*/raw

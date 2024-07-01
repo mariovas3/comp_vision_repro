@@ -1,0 +1,92 @@
+# lightning.pytorch==2.2.1
+seed_everything: 0
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: auto
+  num_nodes: 1
+  precision: null
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      project: "GAN"
+      log_model: "all"
+      name: "local_run"
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.DeviceStatsMonitor
+  fast_dev_run: false
+  max_epochs: 4
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+  limit_train_batches: null
+  limit_val_batches: null
+  limit_test_batches: null
+  limit_predict_batches: null
+  overfit_batches: 0.0
+  val_check_interval: null
+  check_val_every_n_epoch: null
+  num_sanity_val_steps: null
+  log_every_n_steps: null
+  enable_checkpointing: null
+  enable_progress_bar: null
+  enable_model_summary: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: null
+  gradient_clip_algorithm: null
+  deterministic: true
+  benchmark: null
+  inference_mode: true
+  use_distributed_sampler: true
+  profiler: null
+  detect_anomaly: false
+  barebones: false
+  plugins: null
+  sync_batchnorm: false
+  reload_dataloaders_every_n_epochs: 0
+  default_root_dir: null
+model:
+  latent_dim: 128
+  lr: 1e-3
+  betas: [0.9, 0.999]
+  num_discriminator_grad_steps: 3
+  cfg:
+    generator:
+      Hout: 28
+      Wout: 28
+      # this config for the generator gives (1, 28, 28) outputs;
+      out_channels: [128, 64, 32, 16, 1]
+      kernels: [4, 4, 4, 4, 4]
+      paddings: [0, 0, 0, 0, 0]
+      strides: [1, 2, 2, 1, 1]
+    discriminator:
+      Cin: 1
+      Hin: 28
+      Win: 28
+      out_channels: [16, 32, 64]
+      kernels: [5, 3, 3]
+      paddings: [0, 0, 0]
+      strides: [2, 1, 1]
+  num_latents_to_sample: null
+  gradient_clip_val: null
+  gradient_clip_algorithm: norm
+data:
+  batch_size: 128
+  num_workers: 1
+my_model_checkpoint:
+  dirpath: null
+  filename: null
+  monitor: generator_loss
+  verbose: false
+  save_last: null
+  save_top_k: 1
+  save_weights_only: false
+  mode: min
+  auto_insert_metric_name: true
+  every_n_train_steps: null
+  train_time_interval: null
+  every_n_epochs: 3
+  save_on_train_epoch_end: true
+  enable_version_counter: true
+ckpt_path: null
