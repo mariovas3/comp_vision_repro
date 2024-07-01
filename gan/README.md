@@ -1,6 +1,7 @@
 ## Short summary:
 * I used the DCGAN architecture - conv transpose modules in generator and conv modules in discriminator.
 * This is much more brittle than trianing VAE. In particular, trading off how often to train generator relative to discriminator.
+* Should probably do a larger hparam sweep at some point. Neural architecture search might also help.
 
 ## Running experiments:
 
