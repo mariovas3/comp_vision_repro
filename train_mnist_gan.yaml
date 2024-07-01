@@ -50,11 +50,12 @@ model:
   latent_dim: 128
   lr: 1e-3
   betas: [0.9, 0.999]
-  num_discriminator_grad_steps: 2
+  num_discriminator_grad_steps: 3
   cfg:
     generator:
       Hout: 28
       Wout: 28
+      # this config for the generator gives (1, 28, 28) outputs;
       out_channels: [128, 64, 32, 16, 1]
       kernels: [4, 4, 4, 4, 4]
       paddings: [0, 0, 0, 0, 0]
@@ -63,10 +64,10 @@ model:
       Cin: 1
       Hin: 28
       Win: 28
-      out_channels: [64, 32, 16]
+      out_channels: [16, 32, 64]
       kernels: [5, 3, 3]
       paddings: [0, 0, 0]
-      strides: [2, 2, 2]
+      strides: [2, 1, 1]
   num_latents_to_sample: null
   gradient_clip_val: null
   gradient_clip_algorithm: norm
@@ -76,7 +77,7 @@ data:
 my_model_checkpoint:
   dirpath: null
   filename: null
-  monitor: null
+  monitor: generator_loss
   verbose: false
   save_last: null
   save_top_k: 1
@@ -85,7 +86,7 @@ my_model_checkpoint:
   auto_insert_metric_name: true
   every_n_train_steps: null
   train_time_interval: null
-  every_n_epochs: 50
-  save_on_train_epoch_end: null
+  every_n_epochs: 3
+  save_on_train_epoch_end: true
   enable_version_counter: true
 ckpt_path: null
