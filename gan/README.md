@@ -1,3 +1,7 @@
+## Short summary:
+* I used the DCGAN architecture - conv transpose modules in generator and conv modules in discriminator.
+* This is much more brittle than trianing VAE. In particular, trading off how often to train generator relative to discriminator.
+
 ## Running experiments:
 
 * First navigate to root of repo (one level above this dir).
