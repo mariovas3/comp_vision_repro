@@ -10,3 +10,5 @@ notebooks
 data/downloaded
 data/processed
 data/*/raw
+data/MNIST
+data/VOC*
