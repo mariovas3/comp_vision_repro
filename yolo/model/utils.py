@@ -9,26 +9,21 @@ class CombinedModel(nn.Module):
     def __init__(
         self,
         resnet,
-        num_boxes,
+        num_bboxes,
         num_bbox_elements,
         num_classes,
-        img_transforms=None,
     ):
         super().__init__()
         self.resnet = resnet
         # change from yolov1 output, now predict classes
         # in each bounding box;
-        self.out_channels = num_boxes * (num_bbox_elements + num_classes)
+        self.out_channels = num_bboxes * (num_bbox_elements + num_classes)
         self.conv_head = nn.Conv2d(2048, self.out_channels, kernel_size=1)
-        self.num_boxes = num_boxes
+        self.num_boxes = num_bboxes
         self.num_bbox_elements = num_bbox_elements
         self.num_classes = num_classes
-        self.img_transforms = img_transforms
 
     def forward(self, x):
-        # by default, transform input image to have H = W = 224;
-        if self.img_transforms is not None:
-            x = self.img_transforms(x)
         # feats should be of size (batch, 2048, H / 32, W / 32)
         # we treat the grid is 7x7 so that each cell
         # of feats corresponds to the feats from the
@@ -161,7 +156,7 @@ class YoloV2Loss(nn.Module):
         self.lambda_coord = 5
         self.mse = nn.MSELoss(reduction="sum")
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, get_avg_iou=False):
         """
         pred should be of shape (batch, grid_dim, grid_dim, num_boxes * (num_box_elements + num_classes))
         while target should be of size (batch, grid_dim, grid_dim, num_box_elements + num_classes)
@@ -181,7 +176,10 @@ class YoloV2Loss(nn.Module):
         dim_size = self.num_classes + 5
 
         # selects the best box based on max iou;
-        bestbox = ious.argmax(-1)
+        if not get_avg_iou:
+            bestbox = ious.argmax(-1)
+        else:
+            vals, bestbox = ious.max(-1)
         bestbox = pred.view(-1, self.num_bboxes, dim_size)[
             [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
         ].view(batch_size, grid_dim, grid_dim, -1)
@@ -233,5 +231,7 @@ class YoloV2Loss(nn.Module):
             + self.lambda_noobj * no_object_loss  # forth row
             + class_loss  # fifth row
         )
-
+        if get_avg_iou:
+            avg_iou = (vals * exists_box).sum() / exists_box.sum()
+            return loss, avg_iou
         return loss
