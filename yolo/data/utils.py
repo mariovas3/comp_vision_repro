@@ -1,8 +1,11 @@
+import json
 import random
+from pathlib import Path
 from typing import Literal
 
 import torch
 
+from yolo.metadata import metadata
 from yolo.model import eval_utils
 
 
@@ -113,3 +116,140 @@ def get_all_boxes(dataset):
         _, boxes, _ = get_labels_and_boxes_and_size(info["annotation"])
         all_boxes.extend(boxes)
     return all_boxes
+
+
+def save_to_json(obj, filepath: Path, **kwargs):
+    parent_dir = filepath.parent
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "w") as file:
+        json.dump(obj, file, **kwargs)
+
+
+"""My rewrite for data processing;"""
+
+
+def get_unique_labels(dataset) -> set[str]:
+    labels = set()
+    for data in dataset:
+        voc_annotation = data[-1]["annotation"]
+        for item in voc_annotation["object"]:
+            labels.add(item["name"])
+    return labels
+
+
+def corners_to_midpoint(*coords):
+    xmin, ymin, xmax, ymax = coords
+    centerx = (xmax + xmin) / 2
+    centery = (ymax + ymin) / 2
+    boxwidth = xmax - xmin
+    boxheight = ymax - ymin
+    return centerx, centery, boxwidth, boxheight
+
+
+def midpoint_relative_to_grid(
+    *coords, img_size, grid_dim, standard_img_dim=224
+) -> tuple[tuple]:
+    """returns Tuple of tuples - coords and grid cell (i, j) coords."""
+    x, y, w, h = coords
+    # x and y are in (0, grid_dim)
+    x = grid_dim * x / img_size["width"]
+    y = grid_dim * y / img_size["height"]
+    # i,j represents the cell row and cell column
+    i, j = int(y), int(x)
+    # w and h are in (0, STANDARD_IMG_DIM)
+    # with STANDARD_IMG_DIM=224 for resnet50;
+    w = w / img_size["width"] * standard_img_dim
+    h = h / img_size["height"] * standard_img_dim
+    return (x, y, w, h), (i, j)
+
+
+def get_targets(
+    voc_annotation: dict, grid_dim, num_bbox_elements, label_to_idx: dict
+):
+    img_size = {_: int(val) for _, val in voc_annotation["size"].items()}
+    assert img_size["depth"] == 3
+    num_classes = len(label_to_idx)
+    multiple_boxes_in_grid_cell = False
+
+    # assume only one target box per grid cell;
+    label_matrix = torch.zeros(
+        (grid_dim, grid_dim, num_bbox_elements + num_classes)
+    )
+    for item in voc_annotation["object"]:
+        label_idx = label_to_idx[item["name"]]
+        coords = (
+            float(item["bndbox"]["xmin"]),
+            float(item["bndbox"]["ymin"]),
+            float(item["bndbox"]["xmax"]),
+            float(item["bndbox"]["ymax"]),
+        )
+        # relative x and y center coords are in (0, grid_dim)
+        # the w and h are in (0, STANDARDISED_IMG_DIM)
+        # i and j are index of cell that contains the target box center.
+        coords, (i, j) = midpoint_relative_to_grid(
+            *corners_to_midpoint(*coords),
+            img_size=img_size,
+            grid_dim=grid_dim,
+            standard_img_dim=metadata.STANDARDISED_IMG_DIM,
+        )
+        # will also keep track if we have multiple target boxes in
+        # single grid cell for the current image.
+        if label_matrix[i, j, 0] == 1:
+            multiple_boxes_in_grid_cell = True
+
+        if label_matrix[i, j, -num_classes + label_idx] == 0:
+            label_matrix[i, j, -num_classes + label_idx] = 1  # one-hot class;
+            label_matrix[i, j, 0] = 1  # object exists;
+            label_matrix[i, j, 1:num_bbox_elements] = torch.tensor(coords)
+    return label_matrix, multiple_boxes_in_grid_cell
+
+
+def get_all_label_matrices(
+    dataset, grid_dim, num_bbox_elements, label_to_idx, ignore_multibox=False
+):
+    label_matrices = []
+    multi_box_idxs = []
+
+    for i, (_, info) in enumerate(dataset):
+        label_matrix, multi_box = get_targets(
+            info["annotation"],
+            grid_dim=grid_dim,
+            num_bbox_elements=num_bbox_elements,
+            label_to_idx=label_to_idx,
+        )
+
+        if multi_box:
+            multi_box_idxs.append(i)
+            if ignore_multibox:
+                continue
+        label_matrices.append(label_matrix)
+    return label_matrices, multi_box_idxs
+
+
+class VocDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        imgs,
+        label_matrices,
+        grid_dim,
+        num_bbox_elements,
+        label_to_idx,
+        img_transform,
+    ):
+        super().__init__()
+        self.imgs = imgs
+        self.label_matrices = label_matrices
+        self.grid_dim = grid_dim
+        self.num_bbox_elements = num_bbox_elements
+        self.img_transform = img_transform
+        self.label_to_idx = label_to_idx
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img = self.imgs[idx]
+        label_matrix = self.label_matrices[idx]
+        # label matrix is of shape
+        # (grid_dim, grid_dim, num_bbox_elements + num_classes)
+        return self.img_transform(img), label_matrix
