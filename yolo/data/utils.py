@@ -1,12 +1,23 @@
 import json
+import pickle
 import random
 from pathlib import Path
 from typing import Literal
 
 import torch
+import torchvision.transforms as T
 
 from yolo.metadata import metadata
 from yolo.model import eval_utils
+
+IMG_TRANSFORM_224 = T.Compose(
+    [
+        T.Resize(232),
+        T.CenterCrop(224),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
 
 
 def get_labels_and_boxes_and_size(voc_annotation: dict):
@@ -52,12 +63,12 @@ class Kmeans:
         self.best_score = 1e5
         self.verbose = verbose
 
-    def get_centroids_height_and_width(self):
+    def get_centroids_width_and_height(self):
         # means are of format (xmin, ymin, xmax, ymax)
         pw = self.means[:, -2] - self.means[:, 0]
         ph = self.means[:, -1] - self.means[:, 1]
         assert torch.all(ph > 0) and torch.all(pw > 0)
-        return ph, pw
+        return pw, ph
 
     def get_iou_dist(self, means) -> torch.Tensor:
         ious = torch.zeros((len(self.data), len(means)))
@@ -118,6 +129,12 @@ def get_all_boxes(dataset):
     return all_boxes
 
 
+def load_json(filepath: Path):
+    with open(filepath, "r") as file:
+        obj = json.load(file)
+    return obj
+
+
 def save_to_json(obj, filepath: Path, **kwargs):
     parent_dir = filepath.parent
     parent_dir.mkdir(parents=True, exist_ok=True)
@@ -125,7 +142,17 @@ def save_to_json(obj, filepath: Path, **kwargs):
         json.dump(obj, file, **kwargs)
 
 
-"""My rewrite for data processing;"""
+def save_to_pickle(obj, filepath: Path):
+    parent_dir = filepath.parent
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "wb") as f:
+        pickle.dump(obj, f)
+
+
+def load_pickle(filepath: Path):
+    with open(filepath, "rb") as f:
+        obj = pickle.load(f)
+    return obj
 
 
 def get_unique_labels(dataset) -> set[str]:
@@ -204,13 +231,21 @@ def get_targets(
     return label_matrix, multiple_boxes_in_grid_cell
 
 
-def get_all_label_matrices(
+def get_all_img_label_matrices(
     dataset, grid_dim, num_bbox_elements, label_to_idx, ignore_multibox=False
 ):
+    """
+    Returns list of PIL imgs, list of label_matrix tensors
+    and list of idxs of images where multibox labels were spotted.
+
+    if ignore_multibox set to True, we don't return imgs or label_matrices
+    for such examples.
+    """
     label_matrices = []
     multi_box_idxs = []
+    imgs = []
 
-    for i, (_, info) in enumerate(dataset):
+    for i, (img, info) in enumerate(dataset):
         label_matrix, multi_box = get_targets(
             info["annotation"],
             grid_dim=grid_dim,
@@ -223,7 +258,8 @@ def get_all_label_matrices(
             if ignore_multibox:
                 continue
         label_matrices.append(label_matrix)
-    return label_matrices, multi_box_idxs
+        imgs.append(img)
+    return imgs, label_matrices, multi_box_idxs
 
 
 class VocDataset(torch.utils.data.Dataset):
@@ -231,21 +267,15 @@ class VocDataset(torch.utils.data.Dataset):
         self,
         imgs,
         label_matrices,
-        grid_dim,
-        num_bbox_elements,
-        label_to_idx,
         img_transform,
     ):
         super().__init__()
         self.imgs = imgs
         self.label_matrices = label_matrices
-        self.grid_dim = grid_dim
-        self.num_bbox_elements = num_bbox_elements
         self.img_transform = img_transform
-        self.label_to_idx = label_to_idx
 
     def __len__(self):
-        return len(self.data)
+        return len(self.imgs)
 
     def __getitem__(self, idx):
         img = self.imgs[idx]
