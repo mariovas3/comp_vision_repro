@@ -156,13 +156,15 @@ def conv_dim_formula(in_dim, kernels, paddings, strides, dilations=None):
 
 
 class YoloV2Loss(nn.Module):
-    def __init__(self, grid_dim, num_bboxes, num_classes):
+    def __init__(
+        self, grid_dim, num_bboxes, num_classes, lam_noobj=0.5, lam_coord=5
+    ):
         super().__init__()
         self.grid_dim = grid_dim
         self.num_bboxes = num_bboxes
         self.num_classes = num_classes
-        self.lambda_noobj = 0.5
-        self.lambda_coord = 5
+        self.lam_noobj = lam_noobj
+        self.lam_coord = lam_coord
         self.mse = nn.MSELoss(reduction="sum")
 
     def forward(self, pred, target, get_avg_iou=False):
@@ -174,6 +176,8 @@ class YoloV2Loss(nn.Module):
         """
         batch_size, grid_dim, _, _ = target.shape
         # Calculate IoU for the predicted bounding boxes with target bbox
+        # using broadcasting to make the targets of shape [..., 1, 4]
+        # while the predictions have shape [..., num_boxes, 4];
         ious = eval_utils.get_IoU(
             target[..., 1:5].unsqueeze(-2),
             pred.view(batch_size, grid_dim, grid_dim, self.num_bboxes, -1)[
@@ -235,9 +239,9 @@ class YoloV2Loss(nn.Module):
 
         # overall loss;
         loss = (
-            self.lambda_coord * box_loss  # first two rows in paper
+            self.lam_coord * box_loss  # first two rows in paper
             + object_loss  # third row in paper
-            + self.lambda_noobj * no_object_loss  # forth row
+            + self.lam_noobj * no_object_loss  # forth row
             + class_loss  # fifth row
         )
         if get_avg_iou:

@@ -12,18 +12,18 @@ from yolo.model import eval_utils, utils
 
 
 class LitYoloV2(LightningModule):
-    def __init__(self, lr, grid_dim):
+    def __init__(self, lr, grid_dim, lam_noobj, lam_coord):
         super().__init__()
         self.save_hyperparameters()
-        weights = tv_models.ResNet50_Weights
-        # the resnet compresses images by a factor of 32
-        # so should work with dims that are multiples of 32;
-        resnet50 = tv_models.resnet50(weights.DEFAULT)
+        # instantiate loss;
         self.loss_fn = utils.YoloV2Loss(
             grid_dim=self.hparams["grid_dim"],
             num_bboxes=metadata.NUM_BBOXES,
             num_classes=len(metadata.LABEL_TO_IDX),
+            lam_noobj=lam_noobj,
+            lam_coord=lam_coord,
         )
+        # get anchor boxes;
         anchor_boxes = load_json(metadata.DATA_DIR / "anchor_boxes.json")
         self.anchor_boxes_wh = torch.cat(
             (
@@ -32,6 +32,11 @@ class LitYoloV2(LightningModule):
             ),
             0,
         )
+        # instantiate model;
+        weights = tv_models.ResNet50_Weights
+        # the resnet compresses images by a factor of 32
+        # so should work with dims that are multiples of 32;
+        resnet50 = tv_models.resnet50(weights.DEFAULT)
         self.model = utils.CombinedModel(
             resnet=resnet50,
             num_bboxes=metadata.NUM_BBOXES,
