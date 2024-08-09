@@ -200,11 +200,12 @@ def save_anchor_box_dims(years=("2007",), standard_img_dim=224):
         train_sets.append(train_data)
 
     # get all boxes in x1, y1, x2, y2 format;
-    all_boxes = (
-        torch.tensor(
-            utils.get_all_boxes(chain(*train_sets), scale_box_dims=True)
+    all_boxes = torch.tensor(
+        utils.get_all_boxes(
+            chain(*train_sets),
+            scale_box_dims=True,
+            standard_img_dim=standard_img_dim,
         )
-        * standard_img_dim
     )
 
     print(f"RUNNING KMEANS FOR ANCHOR BOX PRIORS...")
@@ -246,3 +247,15 @@ if __name__ == "__main__":
     x, y = next(iter(tr_loader))
     assert x.shape == (64, 3, 224, 224)
     assert y.shape == (64, 7, 7, 25)
+    y = y.view(-1, 25)
+    xmin = y[:, 1].min().item()
+    xmax = y[:, 1].max().item()
+    ymin = y[:, 2].min().item()
+    ymax = y[:, 2].max().item()
+    wmin = y[:, 3].min().item()
+    wmax = y[:, 3].max().item()
+    hmin = y[:, 4].min().item()
+    hmax = y[:, 4].max().item()
+    print(
+        f"{xmin=}, {xmax=}, {ymin=}, {ymax=}, {wmin=}, {wmax=}, {hmin=}, {hmax=}"
+    )

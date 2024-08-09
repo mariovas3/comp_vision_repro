@@ -111,7 +111,7 @@ class Kmeans:
             self.num_runs -= 1
 
 
-def get_all_boxes(dataset, scale_box_dims=False):
+def get_all_boxes(dataset, scale_box_dims=False, standard_img_dim=224):
     all_boxes = []
     for _, info in dataset:
         _, boxes, img_size = get_labels_and_boxes_and_size(info["annotation"])
@@ -119,6 +119,7 @@ def get_all_boxes(dataset, scale_box_dims=False):
             for i, box in enumerate(boxes):
                 box = [
                     c
+                    * standard_img_dim
                     / (
                         img_size["width"]
                         if c_i % 2 == 0
@@ -185,8 +186,10 @@ def midpoint_relative_to_grid(
     y = grid_dim * y / img_size["height"]
     # i,j represents the cell row and cell column
     i, j = int(y), int(x)
-    # w and h are in (0, STANDARD_IMG_DIM)
-    # with STANDARD_IMG_DIM=224 for resnet50;
+    # make x and y in pixel coords in standard image;
+    x, y = x * standard_img_dim / grid_dim, y * standard_img_dim / grid_dim
+    # w and h are in (0, standard_img_dim)
+    # with standard_img_dim=224 for resnet50;
     w = w / img_size["width"] * standard_img_dim
     h = h / img_size["height"] * standard_img_dim
     return (x, y, w, h), (i, j)
