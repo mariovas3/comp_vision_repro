@@ -1,11 +1,11 @@
 import os
-import pickle
 from itertools import chain
 from pathlib import Path
 from typing import List
 
 import smart_open
 import torch
+import torchvision.transforms as T
 from lightning import LightningDataModule
 from lightning.pytorch.utilities.types import EVAL_DATALOADERS
 from PIL import Image
@@ -23,11 +23,15 @@ class LitVOCData(LightningDataModule):
         self,
         batch_size=64,
         num_workers=4,
+        grid_dim=7,
         pin_memory=True,
         years=("2007",),
         ignore_multibox=True,
     ):
         super().__init__()
+        self.grid_dim = grid_dim
+        assert grid_dim <= 13, f"{grid_dim=}, but should be <= 13"
+        self.img_transform = get_img_transform(grid_dim=grid_dim)
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -43,15 +47,22 @@ class LitVOCData(LightningDataModule):
         print(f"DOWNLOADING VOC DATA...")
         if not (metadata.DATA_DIR / "train_gt.pkl").exists():
             save_imgs_and_labels(
+                grid_dim=self.grid_dim,
                 split="train",
                 years=self.years,
                 ignore_multibox=self.ignore_multibox,
             )
             save_imgs_and_labels(
-                split="val", years=self.years, ignore_multibox=False
+                grid_dim=self.grid_dim,
+                split="val",
+                years=self.years,
+                ignore_multibox=False,
             )
             save_imgs_and_labels(
-                split="test", years=("2007",), ignore_multibox=False
+                grid_dim=self.grid_dim,
+                split="test",
+                years=("2007",),
+                ignore_multibox=False,
             )
 
         save_anchor_box_dims(years=self.years)
@@ -66,12 +77,12 @@ class LitVOCData(LightningDataModule):
             self.train_dataset = utils.VocDataset(
                 imgs=train_imgs,
                 label_matrices=train_gt,
-                img_transform=utils.IMG_TRANSFORM_224,
+                img_transform=self.img_transform,
             )
             self.val_dataset = utils.VocDataset(
                 imgs=val_imgs,
                 label_matrices=val_gt,
-                img_transform=utils.IMG_TRANSFORM_224,
+                img_transform=self.img_transform,
             )
         else:
             test_imgs = load_imgs(metadata.DATA_DIR / "test_imgs")
@@ -79,7 +90,7 @@ class LitVOCData(LightningDataModule):
             self.test_dataset = utils.VocDataset(
                 imgs=test_imgs,
                 label_matrices=test_gt,
-                img_transform=utils.IMG_TRANSFORM_224,
+                img_transform=self.img_transform,
             )
 
     def train_dataloader(self):
@@ -113,6 +124,18 @@ class LitVOCData(LightningDataModule):
         )
 
 
+def get_img_transform(grid_dim):
+    img_size = grid_dim * 32
+    return T.Compose(
+        [
+            T.Resize(img_size + 32),
+            T.CenterCrop(img_size),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+
 def save_imgs(imgs: List[Image.Image], dir_path: Path):
     dir_path.mkdir(parents=True, exist_ok=True)
     for idx, im in enumerate(imgs):
@@ -133,7 +156,9 @@ def load_imgs(dir_path: Path):
     return [read_pil(filename) for filename in img_names]
 
 
-def save_imgs_and_labels(split="train", years=("2007",), ignore_multibox=True):
+def save_imgs_and_labels(
+    grid_dim, split="train", years=("2007",), ignore_multibox=True
+):
     imgs, labels = [], []
     for year in years:
         data = VOCDetection(
@@ -141,7 +166,7 @@ def save_imgs_and_labels(split="train", years=("2007",), ignore_multibox=True):
         )
         ims, labs, _ = utils.get_all_img_label_matrices(
             data,
-            grid_dim=metadata.GRID_DIM,
+            grid_dim=grid_dim,
             num_bbox_elements=5,
             label_to_idx=metadata.LABEL_TO_IDX,
             ignore_multibox=ignore_multibox,
@@ -193,6 +218,7 @@ if __name__ == "__main__":
     dm = LitVOCData(
         batch_size=64,
         num_workers=1,
+        grid_dim=7,
         pin_memory=False,
         years=("2007",),
         ignore_multibox=True,

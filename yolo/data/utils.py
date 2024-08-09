@@ -5,19 +5,9 @@ from pathlib import Path
 from typing import Literal
 
 import torch
-import torchvision.transforms as T
 
 from yolo.metadata import metadata
 from yolo.model import eval_utils
-
-IMG_TRANSFORM_224 = T.Compose(
-    [
-        T.Resize(232),
-        T.CenterCrop(224),
-        T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
 
 
 def get_labels_and_boxes_and_size(voc_annotation: dict):
