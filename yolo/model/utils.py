@@ -12,14 +12,16 @@ class CombinedModel(nn.Module):
         num_bboxes,
         num_bbox_elements,
         num_classes,
+        anchor_boxes_wh: torch.Tensor,
     ):
         super().__init__()
         self.resnet = resnet
+        self.register_buffer("anchor_boxes_wh", anchor_boxes_wh)
         # change from yolov1 output, now predict classes
         # in each bounding box;
         self.out_channels = num_bboxes * (num_bbox_elements + num_classes)
         self.conv_head = nn.Conv2d(2048, self.out_channels, kernel_size=1)
-        self.num_boxes = num_bboxes
+        self.num_bboxes = num_bboxes
         self.num_bbox_elements = num_bbox_elements
         self.num_classes = num_classes
 
@@ -37,7 +39,7 @@ class CombinedModel(nn.Module):
         # permute dims to get output of (B, grid_dim, grid_dim, out_channels)
         return self.conv_head(feats).permute(0, -2, -1, 1)
 
-    def get_yolo9000_output(self, x):
+    def get_box_predictions(self, x, grid_dim):
         out = self(x)
         offset = self.num_bbox_elements + self.num_classes
         # get confidence prob;
@@ -58,17 +60,24 @@ class CombinedModel(nn.Module):
         out[..., 4::offset] = torch.exp(out[..., 4::offset])
         # get softmax for classes
         B, S, _, _ = out.shape
-        out = out.view(B, S, S, self.num_boxes, -1)
+        out = out.view(B, S, S, self.num_bboxes, -1)
         out[..., self.num_bbox_elements :] = torch.softmax(
             out[..., self.num_bbox_elements :], -1
         )
-        return out.view(B, S, S, -1)
+        out = out.view(B, S, S, -1)
+        output_to_bounding_boxes_xywh_(
+            yolo_output=out,
+            grid_dim=grid_dim,
+            num_bboxes=self.num_bboxes,
+            anchor_boxes_wh=self.anchor_boxes_wh,
+        )
+        return out
 
 
 def output_to_bounding_boxes_xywh_(
     yolo_output: torch.Tensor,
     grid_dim: int,
-    num_boxes: int,
+    num_bboxes: int,
     anchor_boxes_wh: torch.Tensor,
 ):
     """
@@ -79,13 +88,13 @@ def output_to_bounding_boxes_xywh_(
         where out_len is num_bboxes * (has_object + (x, y, w, h) + num_classes)
     anchor_boxes: tensor of size (2, num_anchor_boxes).
     """
-    assert num_boxes == anchor_boxes_wh.shape[-1]
+    assert num_bboxes == anchor_boxes_wh.shape[-1]
     # grid_dim, grid_dim, 1
     width_grid_coords = (
         torch.arange(grid_dim).expand(grid_dim, -1).unsqueeze(-1)
     )
     # the 5 corresponds to (has_object, x, y, w, h)
-    num_classes = yolo_output.shape[-1] // num_boxes - 5
+    num_classes = yolo_output.shape[-1] // num_bboxes - 5
     offset = 5 + num_classes
     # get predicted center of bounding boxes;
     # x and y are in (0, grid_dim);
