@@ -31,6 +31,7 @@ class LitVOCData(LightningDataModule):
         super().__init__()
         self.grid_dim = grid_dim
         assert grid_dim <= 13, f"{grid_dim=}, but should be <= 13"
+        self.standard_img_dim = grid_dim * 32
         self.img_transform = get_img_transform(grid_dim=grid_dim)
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -51,21 +52,26 @@ class LitVOCData(LightningDataModule):
                 split="train",
                 years=self.years,
                 ignore_multibox=self.ignore_multibox,
+                standard_img_dim=self.standard_img_dim,
             )
             save_imgs_and_labels(
                 grid_dim=self.grid_dim,
                 split="val",
                 years=self.years,
                 ignore_multibox=False,
+                standard_img_dim=self.standard_img_dim,
             )
             save_imgs_and_labels(
                 grid_dim=self.grid_dim,
                 split="test",
                 years=("2007",),
                 ignore_multibox=False,
+                standard_img_dim=self.standard_img_dim,
             )
 
-        save_anchor_box_dims(years=self.years)
+        save_anchor_box_dims(
+            years=self.years, standard_img_dim=self.standard_img_dim
+        )
         print("DATA PREP DONE!")
 
     def setup(self, stage="fit"):
@@ -157,7 +163,11 @@ def load_imgs(dir_path: Path):
 
 
 def save_imgs_and_labels(
-    grid_dim, split="train", years=("2007",), ignore_multibox=True
+    grid_dim,
+    split="train",
+    years=("2007",),
+    ignore_multibox=True,
+    standard_img_dim=224,
 ):
     imgs, labels = [], []
     for year in years:
@@ -170,6 +180,7 @@ def save_imgs_and_labels(
             num_bbox_elements=5,
             label_to_idx=metadata.LABEL_TO_IDX,
             ignore_multibox=ignore_multibox,
+            standard_img_dim=standard_img_dim,
         )
         imgs.extend(ims)
         labels.extend(labs)
@@ -180,7 +191,7 @@ def save_imgs_and_labels(
     utils.save_to_pickle(labels, metadata.DATA_DIR / f"{split}_gt.pkl")
 
 
-def save_anchor_box_dims(years=("2007",)):
+def save_anchor_box_dims(years=("2007",), standard_img_dim=224):
     train_sets = []
     for year in years:
         train_data = VOCDetection(
@@ -189,7 +200,12 @@ def save_anchor_box_dims(years=("2007",)):
         train_sets.append(train_data)
 
     # get all boxes in x1, y1, x2, y2 format;
-    all_boxes = torch.tensor(utils.get_all_boxes(chain(*train_sets)))
+    all_boxes = (
+        torch.tensor(
+            utils.get_all_boxes(chain(*train_sets), scale_box_dims=True)
+        )
+        * standard_img_dim
+    )
 
     print(f"RUNNING KMEANS FOR ANCHOR BOX PRIORS...")
     kmeans = utils.Kmeans(

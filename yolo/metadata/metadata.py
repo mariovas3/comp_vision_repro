@@ -4,9 +4,9 @@ ROOT_DIR = Path(__file__).absolute().parents[2]
 SAVED_MODELS_PATH = ROOT_DIR / "saved_models/yolo"
 DATA_DIR = ROOT_DIR / "data"
 ANCHOR_DIMS_PATH = DATA_DIR / "anchor_dims.json"
-STANDARDISED_IMG_DIM = 224
+DEFAULT_STANDARD_IMG_DIM = 224
 NUM_BBOXES = 5
-GRID_DIM = 7
+DEFAULT_GRID_DIM = 7
 LABEL_TO_IDX = {
     "aeroplane": 0,
     "bicycle": 1,

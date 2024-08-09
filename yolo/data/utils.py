@@ -111,10 +111,22 @@ class Kmeans:
             self.num_runs -= 1
 
 
-def get_all_boxes(dataset):
+def get_all_boxes(dataset, scale_box_dims=False):
     all_boxes = []
     for _, info in dataset:
-        _, boxes, _ = get_labels_and_boxes_and_size(info["annotation"])
+        _, boxes, img_size = get_labels_and_boxes_and_size(info["annotation"])
+        if scale_box_dims:
+            for i, box in enumerate(boxes):
+                box = [
+                    c
+                    / (
+                        img_size["width"]
+                        if c_i % 2 == 0
+                        else img_size["height"]
+                    )
+                    for c_i, c in enumerate(box)
+                ]
+                boxes[i] = box
         all_boxes.extend(boxes)
     return all_boxes
 
@@ -181,7 +193,11 @@ def midpoint_relative_to_grid(
 
 
 def get_targets(
-    voc_annotation: dict, grid_dim, num_bbox_elements, label_to_idx: dict
+    voc_annotation: dict,
+    grid_dim,
+    num_bbox_elements,
+    label_to_idx: dict,
+    standard_img_dim=224,
 ):
     img_size = {_: int(val) for _, val in voc_annotation["size"].items()}
     assert img_size["depth"] == 3
@@ -207,7 +223,7 @@ def get_targets(
             *corners_to_midpoint(*coords),
             img_size=img_size,
             grid_dim=grid_dim,
-            standard_img_dim=metadata.STANDARDISED_IMG_DIM,
+            standard_img_dim=standard_img_dim,
         )
         # will also keep track if we have multiple target boxes in
         # single grid cell for the current image.
@@ -222,7 +238,12 @@ def get_targets(
 
 
 def get_all_img_label_matrices(
-    dataset, grid_dim, num_bbox_elements, label_to_idx, ignore_multibox=False
+    dataset,
+    grid_dim,
+    num_bbox_elements,
+    label_to_idx,
+    ignore_multibox=False,
+    standard_img_dim=224,
 ):
     """
     Returns list of PIL imgs, list of label_matrix tensors
@@ -241,6 +262,7 @@ def get_all_img_label_matrices(
             grid_dim=grid_dim,
             num_bbox_elements=num_bbox_elements,
             label_to_idx=label_to_idx,
+            standard_img_dim=standard_img_dim,
         )
 
         if multi_box:
