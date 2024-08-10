@@ -3,7 +3,6 @@ from itertools import chain
 from pathlib import Path
 from typing import List
 
-import smart_open
 import torch
 import torchvision.transforms as T
 from lightning import LightningDataModule
@@ -31,8 +30,11 @@ class LitVOCData(LightningDataModule):
         super().__init__()
         self.grid_dim = grid_dim
         assert grid_dim <= 13, f"{grid_dim=}, but should be <= 13"
-        self.standard_img_dim = grid_dim * 32
-        self.img_transform = get_img_transform(grid_dim=grid_dim)
+        self.crop_size = grid_dim * 32
+        self.resize_size = self.crop_size + 8
+        self.img_transform = get_img_transform(
+            resize_size=self.resize_size, crop_size=self.crop_size
+        )
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -49,28 +51,33 @@ class LitVOCData(LightningDataModule):
         if not (metadata.DATA_DIR / "train_gt.pkl").exists():
             save_imgs_and_labels(
                 grid_dim=self.grid_dim,
+                resize_size=self.resize_size,
                 split="train",
                 years=self.years,
                 ignore_multibox=self.ignore_multibox,
-                standard_img_dim=self.standard_img_dim,
+                crop_size=self.crop_size,
             )
             save_imgs_and_labels(
                 grid_dim=self.grid_dim,
+                resize_size=self.resize_size,
                 split="val",
                 years=self.years,
                 ignore_multibox=False,
-                standard_img_dim=self.standard_img_dim,
+                crop_size=self.crop_size,
             )
             save_imgs_and_labels(
                 grid_dim=self.grid_dim,
+                resize_size=self.resize_size,
                 split="test",
                 years=("2007",),
                 ignore_multibox=False,
-                standard_img_dim=self.standard_img_dim,
+                crop_size=self.crop_size,
             )
 
         save_anchor_box_dims(
-            years=self.years, standard_img_dim=self.standard_img_dim
+            resize_size=self.resize_size,
+            years=self.years,
+            crop_size=self.crop_size,
         )
         print("DATA PREP DONE!")
 
@@ -130,12 +137,11 @@ class LitVOCData(LightningDataModule):
         )
 
 
-def get_img_transform(grid_dim):
-    img_size = grid_dim * 32
+def get_img_transform(resize_size, crop_size):
     return T.Compose(
         [
-            T.Resize(img_size + 32),
-            T.CenterCrop(img_size),
+            T.Resize(resize_size),
+            T.CenterCrop(crop_size),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
@@ -148,26 +154,20 @@ def save_imgs(imgs: List[Image.Image], dir_path: Path):
         im.save(dir_path / f"{idx}.jpg")
 
 
-def read_pil(filename):
-    with smart_open.open(filename, "rb") as f:
-        with Image.open(f) as image:
-            image = image.convert(image.mode)
-            return image
-
-
 def load_imgs(dir_path: Path):
     img_names = sorted(
         dir_path.glob("*.jpg"), key=lambda filename: int(Path(filename).stem)
     )
-    return [read_pil(filename) for filename in img_names]
+    return [utils.read_pil(filename) for filename in img_names]
 
 
 def save_imgs_and_labels(
     grid_dim,
+    resize_size,
     split="train",
     years=("2007",),
     ignore_multibox=True,
-    standard_img_dim=224,
+    crop_size=224,
 ):
     imgs, labels = [], []
     for year in years:
@@ -179,8 +179,9 @@ def save_imgs_and_labels(
             grid_dim=grid_dim,
             num_bbox_elements=5,
             label_to_idx=metadata.LABEL_TO_IDX,
+            resize_size=resize_size,
             ignore_multibox=ignore_multibox,
-            standard_img_dim=standard_img_dim,
+            crop_size=crop_size,
         )
         imgs.extend(ims)
         labels.extend(labs)
@@ -191,7 +192,7 @@ def save_imgs_and_labels(
     utils.save_to_pickle(labels, metadata.DATA_DIR / f"{split}_gt.pkl")
 
 
-def save_anchor_box_dims(years=("2007",), standard_img_dim=224):
+def save_anchor_box_dims(resize_size, years=("2007",), crop_size=224):
     train_sets = []
     for year in years:
         train_data = VOCDetection(
@@ -203,9 +204,11 @@ def save_anchor_box_dims(years=("2007",), standard_img_dim=224):
     all_boxes = torch.tensor(
         utils.get_all_boxes(
             chain(*train_sets),
+            resize_size=resize_size,
             scale_box_dims=True,
-            standard_img_dim=standard_img_dim,
-        )
+            crop_size=crop_size,
+        ),
+        dtype=torch.float32,
     )
 
     print(f"RUNNING KMEANS FOR ANCHOR BOX PRIORS...")
