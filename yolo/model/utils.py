@@ -13,6 +13,7 @@ class CombinedModel(nn.Module):
         num_bbox_elements,
         num_classes,
         anchor_boxes_wh: torch.Tensor,
+        standard_img_dim: int = 224,
     ):
         super().__init__()
         self.resnet = resnet
@@ -24,6 +25,7 @@ class CombinedModel(nn.Module):
         self.num_bboxes = num_bboxes
         self.num_bbox_elements = num_bbox_elements
         self.num_classes = num_classes
+        self.standard_img_dim = standard_img_dim
 
     def forward(self, x):
         # feats should be of size (batch, 2048, H / 32, W / 32)
@@ -65,11 +67,14 @@ class CombinedModel(nn.Module):
             out[..., self.num_bbox_elements :], -1
         )
         out = out.view(B, S, S, -1)
+        # map x and y to pixel values in a
+        # (standard_img_dim x standard_img_dim) image
         output_to_bounding_boxes_xywh_(
             yolo_output=out,
             grid_dim=grid_dim,
             num_bboxes=self.num_bboxes,
             anchor_boxes_wh=self.anchor_boxes_wh,
+            standard_img_dim=self.standard_img_dim,
         )
         return out
 
@@ -79,10 +84,13 @@ def output_to_bounding_boxes_xywh_(
     grid_dim: int,
     num_bboxes: int,
     anchor_boxes_wh: torch.Tensor,
+    standard_img_dim: int = 224,
 ):
     """
     Inplace modify yolo output to be
     prob_obj, bx, by, bw, bh, softmax_over_classes as per yolov2 paper.
+    bx and by will be in pixel coords of a standard_img_dim x standard_img_dim
+    image.
 
     yolo_output: tensor of size (batch, grid_dim, grid_dim, out_len)
         where out_len is num_bboxes * (has_object + (x, y, w, h) + num_classes)
@@ -97,13 +105,17 @@ def output_to_bounding_boxes_xywh_(
     num_classes = yolo_output.shape[-1] // num_bboxes - 5
     offset = 5 + num_classes
     # get predicted center of bounding boxes;
-    # x and y are in (0, grid_dim);
+    # x and y are in (0, grid_dim) * standard_img_dim / grid_dim;
     yolo_output[..., 1::offset] = (
-        yolo_output[..., 1::offset] + width_grid_coords
+        (yolo_output[..., 1::offset] + width_grid_coords)
+        * standard_img_dim
+        / grid_dim
     )
-    yolo_output[..., 2::offset] = yolo_output[
-        ..., 2::offset
-    ] + width_grid_coords.permute(1, 0, 2)
+    yolo_output[..., 2::offset] = (
+        (yolo_output[..., 2::offset] + width_grid_coords.permute(1, 0, 2))
+        * standard_img_dim
+        / grid_dim
+    )
     # width and height are in anchor_width * exp(logit_w) and anchor_height * exp(logit_h)
     yolo_output[..., 3::offset] = (
         yolo_output[..., 3::offset] * anchor_boxes_wh[0]
@@ -155,6 +167,59 @@ def conv_dim_formula(in_dim, kernels, paddings, strides, dilations=None):
     return out
 
 
+def greedy_iou_box_selection(pred, target, get_avg_iou=False):
+    """
+    pred: of shape (B, grid_dim, grid_dim, num_boxes * (5 + num_classes))
+    """
+    batch_size, grid_dim, _, out_channels = target.shape
+    num_boxes = pred.shape[-1] // out_channels
+    assert num_boxes * out_channels == pred.shape[-1]
+    # Calculate IoU for the predicted bounding boxes with target bbox
+    # using broadcasting to make the targets of shape [..., 1, 4]
+    # while the predictions have shape [..., num_boxes, 4];
+    ious = eval_utils.get_IoU(
+        target[..., 1:5].unsqueeze(-2),  # [..., 1, 4] shape;
+        pred.view(batch_size, grid_dim, grid_dim, num_boxes, -1)[
+            ..., 1:5
+        ],  # [..., num_boxes, 4] shape
+        midpoint=True,
+    )
+    # ious should be (batch_size, grid_dim, grid_dim, num_bboxes)
+    # selects the best box based on max iou;
+    if not get_avg_iou:
+        bestbox = ious.argmax(-1)
+    else:
+        vals, bestbox = ious.max(-1)
+    bestbox = pred.reshape(-1, num_boxes, out_channels)[
+        [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
+    ].view(batch_size, grid_dim, grid_dim, -1)
+    if get_avg_iou:
+        return bestbox, vals
+    return bestbox
+
+
+def greedy_confidence_box_selection(label_matrices: torch.Tensor, num_boxes):
+    """
+    Selects one bbox per grid cell based on max confidence.
+
+    label_matrices: is of 3 or 4 dims with the last 3 dims being
+        (grid_dim, grid_dim, out_channels);
+    """
+    if label_matrices.ndim < 4:
+        label_matrices = label_matrices.unsqueeze(0)
+    assert label_matrices.ndim == 4
+    batch_size, grid_dim, _, out_channels = label_matrices.shape
+    box_dim = out_channels // num_boxes
+    assert num_boxes * box_dim == out_channels
+    label_matrices = label_matrices.reshape(-1, num_boxes, box_dim)
+    idxs = label_matrices[..., 0].argmax(-1)
+    label_matrices = label_matrices[
+        [torch.arange(batch_size * grid_dim * grid_dim), idxs.view(-1)]
+    ].view(batch_size, grid_dim, grid_dim, -1)
+    assert label_matrices.shape[-1] == box_dim
+    return label_matrices
+
+
 class YoloV2Loss(nn.Module):
     def __init__(
         self, grid_dim, num_bboxes, num_classes, lam_noobj=0.5, lam_coord=5
@@ -167,74 +232,68 @@ class YoloV2Loss(nn.Module):
         self.lam_coord = lam_coord
         self.mse = nn.MSELoss(reduction="sum")
 
-    def forward(self, pred, target, get_avg_iou=False):
+    def forward(self, pred, target, get_avg_iou=False, iou_box_selection=True):
         """
-        pred should be of shape (batch, grid_dim, grid_dim, num_boxes * (num_box_elements + num_classes))
+        iou_box_selection: if True, will select the greedy box in each cell
+            w.r.t. target box iou. Otherwise selection needs to already have been
+            performed so that pred.shape == target.shape
+        pred: should be of shape (batch, grid_dim, grid_dim, num_boxes * (num_box_elements + num_classes))
         while target should be of size (batch, grid_dim, grid_dim, num_box_elements + num_classes)
 
         both should be in midpoint format - x, y, w, h
         """
-        batch_size, grid_dim, _, _ = target.shape
-        # Calculate IoU for the predicted bounding boxes with target bbox
-        # using broadcasting to make the targets of shape [..., 1, 4]
-        # while the predictions have shape [..., num_boxes, 4];
-        ious = eval_utils.get_IoU(
-            target[..., 1:5].unsqueeze(-2),
-            pred.view(batch_size, grid_dim, grid_dim, self.num_bboxes, -1)[
-                ..., 1:5
-            ],
-            midpoint=True,
-        )
-        # ious should be (batch_size, grid_dim, grid_dim, num_bboxes)
-        dim_size = self.num_classes + 5
-
         # selects the best box based on max iou;
-        if not get_avg_iou:
-            bestbox = ious.argmax(-1)
+        if iou_box_selection:
+            if get_avg_iou:
+                bestbox, vals = greedy_iou_box_selection(
+                    pred, target, get_avg_iou
+                )
+            else:
+                bestbox = greedy_iou_box_selection(pred, target, get_avg_iou)
+        # otherwise select based on object confidence of boxes
         else:
-            vals, bestbox = ious.max(-1)
-        bestbox = pred.view(-1, self.num_bboxes, dim_size)[
-            [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
-        ].view(batch_size, grid_dim, grid_dim, -1)
-
+            bestbox = pred
+            assert bestbox.shape == target.shape
+            if get_avg_iou:
+                # is batch, grid_dim, grid_dim shape;
+                vals = eval_utils.get_IoU(bestbox, target, midpoint=True)
         # mask for which grid_cells to count in loss;
         exists_box = target[..., 0].unsqueeze(-1)
 
         # coord loss;
-        # Set cells with no object in them to 0
-        box_predictions = exists_box * bestbox[..., 1:5]
-
-        box_targets = exists_box * target[..., 1:5]
+        # divide by crop dim;
+        box_predictions = exists_box * bestbox[..., 1:5] / 224
+        box_targets = exists_box * target[..., 1:5] / 224
 
         # Take sqrt of width and height of boxes
         # for more box size invariance;
         box_predictions[..., 2:4] = torch.sqrt(box_predictions[..., 2:4])
         box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
 
+        # get loss;
         box_loss = self.mse(
             box_predictions.view(-1),
             box_targets.view(-1),
         )
 
         # object detection loss;
-        # pred_box is the confidence score for the bbox with highest IoU
-        pred_box = bestbox[..., 0]
-
         object_loss = self.mse(
-            (exists_box * pred_box).view(-1),
-            (exists_box * target[..., 0]).view(-1),
+            (exists_box * bestbox[..., 0:1]).view(-1),
+            (exists_box * target[..., 0:1]).view(-1),
         )
 
         # no object loss;
         no_object_loss = self.mse(
-            ((1 - exists_box) * bestbox[..., 0]).view(-1),
-            ((1 - exists_box) * target[..., 0]).view(-1),
+            ((1 - exists_box) * bestbox[..., 0:1]).view(-1),
+            ((1 - exists_box) * target[..., 0:1]).view(-1),
         )
 
         # class loss;
-        class_loss = self.mse(
+        # I cringe when I see mse, so I used CELoss;
+        class_loss = nn.functional.cross_entropy(
             (exists_box * bestbox[..., -self.num_classes :]).view(-1),
             (exists_box * target[..., -self.num_classes :]).view(-1),
+            reduction="sum",
         )
 
         # overall loss;
@@ -245,6 +304,8 @@ class YoloV2Loss(nn.Module):
             + class_loss  # fifth row
         )
         if get_avg_iou:
-            avg_iou = (vals * exists_box).sum() / exists_box.sum()
+            avg_iou = (
+                vals.unsqueeze(-1) * exists_box
+            ).sum() / exists_box.sum()
             return loss, avg_iou
         return loss
