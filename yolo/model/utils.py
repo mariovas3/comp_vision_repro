@@ -18,10 +18,19 @@ class CombinedModel(nn.Module):
         num_classes,
         anchor_boxes_wh: torch.Tensor,
         standard_img_dim: int = 224,
+        grid_dim: int = 7,
     ):
         super().__init__()
         self.resnet = resnet
         self.register_buffer("anchor_boxes_wh", anchor_boxes_wh)
+        # grid_dim, grid_dim, 1
+        width_grid_coords = (
+            torch.arange(grid_dim)
+            .expand(grid_dim, -1)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+        )
+        self.register_buffer("width_grid_coords", width_grid_coords)
         # change from yolov1 output, now predict classes
         # in each bounding box;
         self.out_channels = num_bboxes * (num_bbox_elements + num_classes)
@@ -47,86 +56,31 @@ class CombinedModel(nn.Module):
 
     def get_box_predictions(self, x, grid_dim):
         out = self(x)
-        offset = self.num_bbox_elements + self.num_classes
+        batch_size, grid_dim, _, out_channels = out.shape
+        box_dim = out_channels // self.num_bboxes
+        assert box_dim * self.num_bboxes == out_channels
         # get confidence prob;
-        out[..., ::offset] = torch.sigmoid(out[..., ::offset])
-        # get x and y offsets from top left corner of grid cell;
-        # if grid cell has idx (i, j) in the grid, the anchor box
-        # center coords are bx, by = i + sigmoid(x), j + sigmoid(y)
-        # then to remap to image pixels you do
-        # img_x, img_y = bx * img_height / S, by * img_width / S
-        out[..., 1::offset] = torch.sigmoid(out[..., 1::offset])
-        out[..., 2::offset] = torch.sigmoid(out[..., 2::offset])
-        # exponentiate width and height entries;
-        # the bounding box width and height are then
-        # bw, bh = pw * exp(w_entry), ph * exp(h_entry)
-        # where pw and ph are the prior width and height of the
-        # anchor box.
-        out[..., 3::offset] = torch.exp(out[..., 3::offset])
-        out[..., 4::offset] = torch.exp(out[..., 4::offset])
-        # get softmax for classes
-        B, S, _, _ = out.shape
-        out = out.view(B, S, S, self.num_bboxes, -1)
-        out[..., self.num_bbox_elements :] = torch.softmax(
-            out[..., self.num_bbox_elements :], -1
+        out = out.view(batch_size, grid_dim, grid_dim, self.num_bboxes, -1)
+        conf = torch.sigmoid(out[..., 0:1])
+        x = (
+            (torch.sigmoid(out[..., 1:2]) + self.width_grid_coords)
+            * self.standard_img_dim
+            / grid_dim
         )
-        out = out.view(B, S, S, -1)
-        # map x and y to pixel values in a
-        # (standard_img_dim x standard_img_dim) image
-        output_to_bounding_boxes_xywh_(
-            yolo_output=out,
-            grid_dim=grid_dim,
-            num_bboxes=self.num_bboxes,
-            anchor_boxes_wh=self.anchor_boxes_wh,
-            standard_img_dim=self.standard_img_dim,
+        y = (
+            (
+                torch.sigmoid(out[..., 2:3])
+                + self.width_grid_coords.permute(1, 0, 2, 3)
+            )
+            * self.standard_img_dim
+            / grid_dim
         )
-        return out
-
-
-def output_to_bounding_boxes_xywh_(
-    yolo_output: torch.Tensor,
-    grid_dim: int,
-    num_bboxes: int,
-    anchor_boxes_wh: torch.Tensor,
-    standard_img_dim: int = 224,
-):
-    """
-    Inplace modify yolo output to be
-    prob_obj, bx, by, bw, bh, softmax_over_classes as per yolov2 paper.
-    bx and by will be in pixel coords of a standard_img_dim x standard_img_dim
-    image.
-
-    yolo_output: tensor of size (batch, grid_dim, grid_dim, out_len)
-        where out_len is num_bboxes * (has_object + (x, y, w, h) + num_classes)
-    anchor_boxes: tensor of size (2, num_anchor_boxes).
-    """
-    assert num_bboxes == anchor_boxes_wh.shape[-1]
-    # grid_dim, grid_dim, 1
-    width_grid_coords = (
-        torch.arange(grid_dim).expand(grid_dim, -1).unsqueeze(-1)
-    )
-    # the 5 corresponds to (has_object, x, y, w, h)
-    num_classes = yolo_output.shape[-1] // num_bboxes - 5
-    offset = 5 + num_classes
-    # get predicted center of bounding boxes;
-    # x and y are in (0, grid_dim) * standard_img_dim / grid_dim;
-    yolo_output[..., 1::offset] = (
-        (yolo_output[..., 1::offset] + width_grid_coords)
-        * standard_img_dim
-        / grid_dim
-    )
-    yolo_output[..., 2::offset] = (
-        (yolo_output[..., 2::offset] + width_grid_coords.permute(1, 0, 2))
-        * standard_img_dim
-        / grid_dim
-    )
-    # width and height are in anchor_width * exp(logit_w) and anchor_height * exp(logit_h)
-    yolo_output[..., 3::offset] = (
-        yolo_output[..., 3::offset] * anchor_boxes_wh[0]
-    )
-    yolo_output[..., 4::offset] = (
-        yolo_output[..., 4::offset] * anchor_boxes_wh[1]
-    )
+        w = torch.exp(out[..., 3:4]) * self.anchor_boxes_wh[0].unsqueeze(-1)
+        h = torch.exp(out[..., 4:5]) * self.anchor_boxes_wh[1].unsqueeze(-1)
+        class_probs = torch.softmax(out[..., self.num_bbox_elements :], -1)
+        # print(conf.shape, x.shape, y.shape, w.shape, h.shape, class_probs.shape)
+        out = torch.cat((conf, x, y, w, h, class_probs), -1)
+        return out.view(batch_size, grid_dim, grid_dim, -1)
 
 
 def get_resnet_feats(model, x):

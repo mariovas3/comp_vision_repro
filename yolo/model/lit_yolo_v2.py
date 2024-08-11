@@ -45,6 +45,7 @@ class LitYoloV2(LightningModule):
             num_classes=len(metadata.LABEL_TO_IDX),
             anchor_boxes_wh=self.anchor_boxes_wh,
             standard_img_dim=self.standard_img_dim,
+            grid_dim=grid_dim,
         )
         self.model.train()
 
