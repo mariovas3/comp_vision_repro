@@ -5,6 +5,7 @@ SAVED_MODELS_PATH = ROOT_DIR / "saved_models/yolo"
 DATA_DIR = ROOT_DIR / "data"
 ANCHOR_DIMS_PATH = DATA_DIR / "anchor_dims.json"
 DEFAULT_STANDARD_IMG_DIM = 224
+DEFAULT_RESIZE_SIZE = DEFAULT_STANDARD_IMG_DIM + 8
 NUM_BBOXES = 5
 DEFAULT_GRID_DIM = 7
 LABEL_TO_IDX = {
@@ -29,6 +30,8 @@ LABEL_TO_IDX = {
     "train": 18,
     "tvmonitor": 19,
 }
+
+IDX_TO_LABEL = sorted(LABEL_TO_IDX.keys())
 # resnet50 pretrained details:
 # Accepts PIL.Image,
 # batched (B, C, H, W) and single (C, H, W) image torch.Tensor objects.

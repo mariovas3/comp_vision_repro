@@ -140,8 +140,8 @@ class LitVOCData(LightningDataModule):
 def get_img_transform(resize_size, crop_size):
     return T.Compose(
         [
-            T.Resize(resize_size),
-            T.CenterCrop(crop_size),
+            T.Resize((resize_size,)),
+            T.CenterCrop((crop_size, crop_size)),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]

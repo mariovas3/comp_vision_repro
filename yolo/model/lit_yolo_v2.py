@@ -12,9 +12,10 @@ from yolo.model import eval_utils, utils
 
 
 class LitYoloV2(LightningModule):
-    def __init__(self, lr, grid_dim, lam_noobj, lam_coord):
+    def __init__(self, lr=1e-3, grid_dim=7, lam_noobj=0.5, lam_coord=5):
         super().__init__()
         self.save_hyperparameters()
+        self.standard_img_dim = grid_dim * 32
         # instantiate loss;
         self.loss_fn = utils.YoloV2Loss(
             grid_dim=self.hparams["grid_dim"],
@@ -43,6 +44,7 @@ class LitYoloV2(LightningModule):
             num_bbox_elements=5,
             num_classes=len(metadata.LABEL_TO_IDX),
             anchor_boxes_wh=self.anchor_boxes_wh,
+            standard_img_dim=self.standard_img_dim,
         )
         self.model.train()
 
@@ -53,7 +55,9 @@ class LitYoloV2(LightningModule):
         out = self.model.get_box_predictions(
             img, grid_dim=self.hparams["grid_dim"]
         )
-        return self.loss_fn(out, targets, get_avg_iou=get_avg_iou)
+        return self.loss_fn(
+            out, targets, get_avg_iou=get_avg_iou, iou_box_selection=True
+        )
 
     def training_step(self, batch, batch_idx, dataloader_idx=0):
         img, label_matrices = batch
@@ -70,7 +74,15 @@ class LitYoloV2(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         img, label_matrices = batch
-        loss, avg_iou = self._get_loss(img, label_matrices, get_avg_iou=True)
+        out = self.model.get_box_predictions(
+            img, grid_dim=self.hparams["grid_dim"]
+        )
+        out = utils.greedy_confidence_box_selection(
+            out, num_boxes=metadata.NUM_BBOXES
+        )
+        loss, avg_iou = self.loss_fn(
+            out, label_matrices, get_avg_iou=True, iou_box_selection=False
+        )
         self.log_dict(
             {
                 "val/loss": loss.item(),
@@ -81,10 +93,19 @@ class LitYoloV2(LightningModule):
             on_step=True,
             on_epoch=True,
         )
+        return out
 
     def testing_step(self, batch, batch_idx):
         img, label_matrices = batch
-        loss, avg_iou = self._get_loss(img, label_matrices, get_avg_iou=True)
+        out = self.model.get_box_predictions(
+            img, grid_dim=self.hparams["grid_dim"]
+        )
+        out = utils.greedy_confidence_box_selection(
+            out, num_boxes=metadata.NUM_BBOXES
+        )
+        loss, avg_iou = self.loss_fn(
+            out, label_matrices, get_avg_iou=True, iou_box_selection=False
+        )
         self.log_dict(
             {
                 "test/loss": loss.item(),
@@ -95,3 +116,4 @@ class LitYoloV2(LightningModule):
             on_step=True,
             on_epoch=True,
         )
+        return out

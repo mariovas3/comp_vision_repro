@@ -12,3 +12,7 @@ data/processed
 data/*/raw
 data/MNIST
 data/VOC*
+data/*_imgs
+data/*_gt.pkl
+data/anchor*
+GAN

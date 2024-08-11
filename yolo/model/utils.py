@@ -1,7 +1,9 @@
+import matplotlib as plt
 import torch
 import torchvision.transforms as T
 from torch import nn
 
+import yolo.data.utils as dutils
 from yolo.model import eval_utils
 
 
@@ -142,6 +144,91 @@ def get_resnet_feats(model, x):
     return x
 
 
+def single_yolo_to_nms(
+    one_bbox_per_grid, iou_thres=0.1, conf_thres=0.5, midpoint=True
+):
+    """The input must be a single image."""
+    assert one_bbox_per_grid.ndim == 3
+    class_preds = one_bbox_per_grid[..., 5:].argmax(-1, keepdim=True)
+    nms_input = torch.cat((one_bbox_per_grid[..., :5], class_preds), -1)
+    nms_dim = nms_input.shape[-1]
+    nms_boxes = eval_utils.get_nms_boxes(
+        nms_input.view(-1, nms_dim),
+        iou_thres=iou_thres,
+        conf_thres=conf_thres,
+        midpoint=midpoint,
+    )
+    return nms_boxes
+
+
+def yolo_to_one_bbox_per_grid(img_batch, model: CombinedModel, grid_dim=7):
+    yolo_out = model.get_box_predictions(img_batch, grid_dim=grid_dim)
+    return greedy_confidence_box_selection(yolo_out, num_boxes=5)
+
+
+def plot_gt_yolo(
+    one_bbox_per_grid,
+    val_data,
+    idx_to_label,
+    resize_size,
+    crop_size,
+    plot_transform,
+):
+    fig = plt.figure(figsize=(12, 12))
+    for i in range(9):
+        labels, boxes, img_size = dutils.get_labels_and_boxes_and_size(
+            val_data[i][-1]["annotation"]
+        )
+        boxes, bads = list(
+            zip(
+                *[
+                    dutils.resize_and_crop_bbox(
+                        box,
+                        old_w=img_size["width"],
+                        old_h=img_size["height"],
+                        resize_size=resize_size,
+                        crop_size=crop_size,
+                    )
+                    for box in boxes
+                ]
+            )
+        )
+        labels = [_ for i, _ in enumerate(labels) if not bads[i]]
+        boxes = [box for i, box in enumerate(boxes) if not bads[i]]
+        img = plot_transform(val_data[i][0])
+
+        # get pred boxes;
+        nms_boxes_val = single_yolo_to_nms(one_bbox_per_grid[i]).detach()
+        corners = eval_utils.midpoint_box_to_corners(
+            nms_boxes_val[: len(boxes), 1:-1]
+        )
+        nms_labels = [
+            idx_to_label[_.int().item()] for _ in nms_boxes_val[..., -1]
+        ]
+        title = f"nms boxes returned: {len(nms_boxes_val)}"
+
+        plt.subplot(3, 3, i + 1)
+        eval_utils.vis_boxes(
+            img=img,
+            boxes=boxes,
+            labels=labels,
+            title=None,
+            box_color="r",
+            is_gt=True,
+        )
+        eval_utils.vis_boxes_labels(
+            boxes=corners.tolist(),
+            labels=nms_labels,
+            title=title,
+            box_color="b",
+            is_gt=False,
+        )
+
+        plt.axis("off")
+    fig.tight_layout()
+    return fig
+
+
 def conv_dim_formula(in_dim, kernels, paddings, strides, dilations=None):
     """
     Calculate final shape of in_dim after successive conv1d operations.
@@ -165,59 +252,6 @@ def conv_dim_formula(in_dim, kernels, paddings, strides, dilations=None):
             offset -= (kernels[i] - 1) * (dilations[i] - 1)
         out = (out + offset) // strides[i] + 1
     return out
-
-
-def greedy_iou_box_selection(pred, target, get_avg_iou=False):
-    """
-    pred: of shape (B, grid_dim, grid_dim, num_boxes * (5 + num_classes))
-    """
-    batch_size, grid_dim, _, out_channels = target.shape
-    num_boxes = pred.shape[-1] // out_channels
-    assert num_boxes * out_channels == pred.shape[-1]
-    # Calculate IoU for the predicted bounding boxes with target bbox
-    # using broadcasting to make the targets of shape [..., 1, 4]
-    # while the predictions have shape [..., num_boxes, 4];
-    ious = eval_utils.get_IoU(
-        target[..., 1:5].unsqueeze(-2),  # [..., 1, 4] shape;
-        pred.view(batch_size, grid_dim, grid_dim, num_boxes, -1)[
-            ..., 1:5
-        ],  # [..., num_boxes, 4] shape
-        midpoint=True,
-    )
-    # ious should be (batch_size, grid_dim, grid_dim, num_bboxes)
-    # selects the best box based on max iou;
-    if not get_avg_iou:
-        bestbox = ious.argmax(-1)
-    else:
-        vals, bestbox = ious.max(-1)
-    bestbox = pred.reshape(-1, num_boxes, out_channels)[
-        [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
-    ].view(batch_size, grid_dim, grid_dim, -1)
-    if get_avg_iou:
-        return bestbox, vals
-    return bestbox
-
-
-def greedy_confidence_box_selection(label_matrices: torch.Tensor, num_boxes):
-    """
-    Selects one bbox per grid cell based on max confidence.
-
-    label_matrices: is of 3 or 4 dims with the last 3 dims being
-        (grid_dim, grid_dim, out_channels);
-    """
-    if label_matrices.ndim < 4:
-        label_matrices = label_matrices.unsqueeze(0)
-    assert label_matrices.ndim == 4
-    batch_size, grid_dim, _, out_channels = label_matrices.shape
-    box_dim = out_channels // num_boxes
-    assert num_boxes * box_dim == out_channels
-    label_matrices = label_matrices.reshape(-1, num_boxes, box_dim)
-    idxs = label_matrices[..., 0].argmax(-1)
-    label_matrices = label_matrices[
-        [torch.arange(batch_size * grid_dim * grid_dim), idxs.view(-1)]
-    ].view(batch_size, grid_dim, grid_dim, -1)
-    assert label_matrices.shape[-1] == box_dim
-    return label_matrices
 
 
 class YoloV2Loss(nn.Module):
@@ -309,3 +343,56 @@ class YoloV2Loss(nn.Module):
             ).sum() / exists_box.sum()
             return loss, avg_iou
         return loss
+
+
+def greedy_iou_box_selection(pred, target, get_avg_iou=False):
+    """
+    pred: of shape (B, grid_dim, grid_dim, num_boxes * (5 + num_classes))
+    """
+    batch_size, grid_dim, _, out_channels = target.shape
+    num_boxes = pred.shape[-1] // out_channels
+    assert num_boxes * out_channels == pred.shape[-1]
+    # Calculate IoU for the predicted bounding boxes with target bbox
+    # using broadcasting to make the targets of shape [..., 1, 4]
+    # while the predictions have shape [..., num_boxes, 4];
+    ious = eval_utils.get_IoU(
+        target[..., 1:5].unsqueeze(-2),  # [..., 1, 4] shape;
+        pred.view(batch_size, grid_dim, grid_dim, num_boxes, -1)[
+            ..., 1:5
+        ],  # [..., num_boxes, 4] shape
+        midpoint=True,
+    )
+    # ious should be (batch_size, grid_dim, grid_dim, num_bboxes)
+    # selects the best box based on max iou;
+    if not get_avg_iou:
+        bestbox = ious.argmax(-1)
+    else:
+        vals, bestbox = ious.max(-1)
+    bestbox = pred.reshape(-1, num_boxes, out_channels)[
+        [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
+    ].view(batch_size, grid_dim, grid_dim, -1)
+    if get_avg_iou:
+        return bestbox, vals
+    return bestbox
+
+
+def greedy_confidence_box_selection(label_matrices: torch.Tensor, num_boxes):
+    """
+    Selects one bbox per grid cell based on max confidence.
+
+    label_matrices: is of 3 or 4 dims with the last 3 dims being
+        (grid_dim, grid_dim, out_channels);
+    """
+    if label_matrices.ndim < 4:
+        label_matrices = label_matrices.unsqueeze(0)
+    assert label_matrices.ndim == 4
+    batch_size, grid_dim, _, out_channels = label_matrices.shape
+    box_dim = out_channels // num_boxes
+    assert num_boxes * box_dim == out_channels
+    label_matrices = label_matrices.reshape(-1, num_boxes, box_dim)
+    idxs = label_matrices[..., 0].argmax(-1)
+    label_matrices = label_matrices[
+        [torch.arange(batch_size * grid_dim * grid_dim), idxs.view(-1)]
+    ].view(batch_size, grid_dim, grid_dim, -1)
+    assert label_matrices.shape[-1] == box_dim
+    return label_matrices
