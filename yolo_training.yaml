@@ -49,8 +49,8 @@ trainer:
   default_root_dir: null
 model:
   lr: 1e-3
-  lam_noobj: 0.5
-  lam_coord: 5
+  lam_noobj: 10
+  lam_coord: 1
 data:
   batch_size: 64
   num_workers: 4

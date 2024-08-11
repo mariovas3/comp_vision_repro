@@ -77,9 +77,8 @@ class CombinedModel(nn.Module):
         )
         w = torch.exp(out[..., 3:4]) * self.anchor_boxes_wh[0].unsqueeze(-1)
         h = torch.exp(out[..., 4:5]) * self.anchor_boxes_wh[1].unsqueeze(-1)
-        class_probs = torch.softmax(out[..., self.num_bbox_elements :], -1)
-        # print(conf.shape, x.shape, y.shape, w.shape, h.shape, class_probs.shape)
-        out = torch.cat((conf, x, y, w, h, class_probs), -1)
+        class_logits = out[..., self.num_bbox_elements :]
+        out = torch.cat((conf, x, y, w, h, class_logits), -1)
         return out.view(batch_size, grid_dim, grid_dim, -1)
 
 
@@ -131,7 +130,8 @@ def plot_gt_yolo(
     plot_transform,
 ):
     fig = plt.figure(figsize=(12, 12))
-    for i in range(9):
+    to_show = min(9, len(one_bbox_per_grid))
+    for i in range(to_show):
         labels, boxes, img_size = dutils.get_labels_and_boxes_and_size(
             val_data[i][-1]["annotation"]
         )
@@ -220,7 +220,6 @@ class YoloV2Loss(nn.Module):
         self.num_classes = num_classes
         self.lam_noobj = lam_noobj
         self.lam_coord = lam_coord
-        self.mse = nn.MSELoss(reduction="sum")
 
     def forward(self, pred, target, get_avg_iou=False, iou_box_selection=True):
         """
@@ -248,13 +247,13 @@ class YoloV2Loss(nn.Module):
                 # is batch, grid_dim, grid_dim shape;
                 vals = eval_utils.get_IoU(bestbox, target, midpoint=True)
         # mask for which grid_cells to count in loss;
-        exists_box = target[..., 0].unsqueeze(-1)
+        exists_box = target[..., 0].bool()
         num_existing_boxes = exists_box.sum()
 
         # coord loss;
         # divide by crop dim;
-        box_predictions = exists_box * bestbox[..., 1:5] / math.sqrt(224)
-        box_targets = exists_box * target[..., 1:5] / math.sqrt(224)
+        box_predictions = bestbox[exists_box][..., 1:5] / math.sqrt(224)
+        box_targets = target[exists_box][..., 1:5] / math.sqrt(224)
 
         # Take sqrt of width and height of boxes
         # for more box size invariance;
@@ -263,34 +262,35 @@ class YoloV2Loss(nn.Module):
 
         # get loss;
         box_loss = (
-            self.mse(
-                box_predictions,
-                box_targets,
+            nn.functional.mse_loss(
+                box_predictions, box_targets, reduction="sum"
             )
             / num_existing_boxes
         )
 
         # object detection loss;
         object_loss = (
-            self.mse(
-                exists_box * bestbox[..., 0:1],
-                exists_box * target[..., 0:1],
+            nn.functional.binary_cross_entropy(
+                bestbox[exists_box][..., 0:1],
+                target[exists_box][..., 0:1],
+                reduction="sum",
             )
             / num_existing_boxes
         )
 
         # no object loss;
-        no_object_loss = self.mse(
-            (1 - exists_box) * bestbox[..., 0:1],
-            (1 - exists_box) * target[..., 0:1],
+        no_object_loss = nn.functional.binary_cross_entropy(
+            bestbox[~exists_box][..., 0:1],
+            target[~exists_box][..., 0:1],
+            reduction="sum",
         ) / (exists_box.numel() - num_existing_boxes)
 
         # class loss;
         # I cringe when I see mse, so I used CELoss;
         class_loss = (
             nn.functional.cross_entropy(
-                (exists_box * bestbox[..., -self.num_classes :]).view(-1),
-                (exists_box * target[..., -self.num_classes :]).view(-1),
+                bestbox[exists_box][..., -self.num_classes :],
+                target[exists_box][..., -self.num_classes :],
                 reduction="sum",
             )
             / num_existing_boxes
@@ -303,13 +303,12 @@ class YoloV2Loss(nn.Module):
             + self.lam_noobj * no_object_loss  # forth row
             + class_loss  # fifth row
         )
-        print(
-            f"{box_loss.item()=}, {object_loss.item()=}, {no_object_loss.item()=}, {class_loss.item()=}"
-        )
+        # print(
+        #     f"{box_loss.item()=}, {object_loss.item()=}, {no_object_loss.item()=}, {class_loss.item()=}"
+        # )
+
         if get_avg_iou:
-            avg_iou = (
-                vals.unsqueeze(-1) * exists_box
-            ).sum() / exists_box.sum()
+            avg_iou = vals[exists_box].sum() / exists_box.sum()
             return loss, avg_iou
         return loss
 

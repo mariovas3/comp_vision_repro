@@ -12,7 +12,7 @@ from yolo.model import eval_utils, utils
 
 
 class LitYoloV2(LightningModule):
-    def __init__(self, lr=1e-3, grid_dim=7, lam_noobj=0.5, lam_coord=5):
+    def __init__(self, lr=1e-3, grid_dim=7, lam_noobj=10, lam_coord=1):
         super().__init__()
         self.save_hyperparameters()
         self.standard_img_dim = grid_dim * 32
