@@ -25,7 +25,7 @@ class LitYoloV2(LightningModule):
             lam_coord=lam_coord,
         )
         # get anchor boxes;
-        anchor_boxes = load_json(metadata.DATA_DIR / "anchor_boxes.json")
+        anchor_boxes = load_json(metadata.DATA_DIR / "anchor_dims.json")
         self.anchor_boxes_wh = torch.cat(
             (
                 torch.tensor(anchor_boxes["pw"]).view(1, -1),

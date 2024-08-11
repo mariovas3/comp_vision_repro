@@ -39,7 +39,7 @@ class LitVOCData(LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.ignore_multibox = ignore_multibox
-        self.years = years
+        self.years = tuple(years)
         assert self.years == ("2007",) or self.years == ("2007", "2012")
 
     def prepare_data(self):

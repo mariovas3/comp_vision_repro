@@ -28,7 +28,7 @@ class LogValDetectionsCallback(Callback):
     ) -> None:
         if batch_idx == 0 and dataloader_idx == 0:
             logger = trainer.logger
-            img_transform = trainer.val_dataloaders[0].dataset.img_transform
+            img_transform = trainer.val_dataloaders.dataset.img_transform
             resize_size = img_transform.transforms[0].size[0]
             crop_size = img_transform.transforms[1].size[0]
             plot_transform = T.Compose(
@@ -47,4 +47,4 @@ class LogValDetectionsCallback(Callback):
                 crop_size=crop_size,
                 plot_transform=plot_transform,
             )
-            logger.log({"val/detections": wandb.Image(fig)})
+            wandb.log({"val/detections": wandb.Image(fig)})
