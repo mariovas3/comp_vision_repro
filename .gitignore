@@ -16,3 +16,4 @@ data/*_imgs
 data/*_gt.pkl
 data/anchor*
 GAN
+YOLO-V2
