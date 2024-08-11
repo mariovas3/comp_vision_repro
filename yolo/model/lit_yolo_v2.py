@@ -37,7 +37,7 @@ class LitYoloV2(LightningModule):
         weights = tv_models.ResNet50_Weights
         # the resnet compresses images by a factor of 32
         # so should work with dims that are multiples of 32;
-        resnet50 = tv_models.resnet50(weights.DEFAULT)
+        resnet50 = tv_models.resnet50(weights=weights.DEFAULT)
         self.model = utils.CombinedModel(
             resnet=resnet50,
             num_bboxes=metadata.NUM_BBOXES,

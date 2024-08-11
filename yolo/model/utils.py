@@ -1,3 +1,5 @@
+import math
+
 import matplotlib.pyplot as plt
 import torch
 import torchvision.transforms as T
@@ -293,41 +295,51 @@ class YoloV2Loss(nn.Module):
                 vals = eval_utils.get_IoU(bestbox, target, midpoint=True)
         # mask for which grid_cells to count in loss;
         exists_box = target[..., 0].unsqueeze(-1)
+        num_existing_boxes = exists_box.sum()
 
         # coord loss;
         # divide by crop dim;
-        box_predictions = exists_box * bestbox[..., 1:5] / 224
-        box_targets = exists_box * target[..., 1:5] / 224
+        box_predictions = exists_box * bestbox[..., 1:5] / math.sqrt(224)
+        box_targets = exists_box * target[..., 1:5] / math.sqrt(224)
 
         # Take sqrt of width and height of boxes
         # for more box size invariance;
-        box_predictions[..., 2:4] = torch.sqrt(box_predictions[..., 2:4])
-        box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
+        # box_predictions[..., 2:4] = torch.sqrt(box_predictions[..., 2:4])
+        # box_targets[..., 2:4] = torch.sqrt(box_targets[..., 2:4])
 
         # get loss;
-        box_loss = self.mse(
-            box_predictions.view(-1),
-            box_targets.view(-1),
+        box_loss = (
+            self.mse(
+                box_predictions,
+                box_targets,
+            )
+            / num_existing_boxes
         )
 
         # object detection loss;
-        object_loss = self.mse(
-            (exists_box * bestbox[..., 0:1]).view(-1),
-            (exists_box * target[..., 0:1]).view(-1),
+        object_loss = (
+            self.mse(
+                exists_box * bestbox[..., 0:1],
+                exists_box * target[..., 0:1],
+            )
+            / num_existing_boxes
         )
 
         # no object loss;
         no_object_loss = self.mse(
-            ((1 - exists_box) * bestbox[..., 0:1]).view(-1),
-            ((1 - exists_box) * target[..., 0:1]).view(-1),
-        )
+            (1 - exists_box) * bestbox[..., 0:1],
+            (1 - exists_box) * target[..., 0:1],
+        ) / (exists_box.numel() - num_existing_boxes)
 
         # class loss;
         # I cringe when I see mse, so I used CELoss;
-        class_loss = nn.functional.cross_entropy(
-            (exists_box * bestbox[..., -self.num_classes :]).view(-1),
-            (exists_box * target[..., -self.num_classes :]).view(-1),
-            reduction="sum",
+        class_loss = (
+            nn.functional.cross_entropy(
+                (exists_box * bestbox[..., -self.num_classes :]).view(-1),
+                (exists_box * target[..., -self.num_classes :]).view(-1),
+                reduction="sum",
+            )
+            / num_existing_boxes
         )
 
         # overall loss;
@@ -336,6 +348,9 @@ class YoloV2Loss(nn.Module):
             + object_loss  # third row in paper
             + self.lam_noobj * no_object_loss  # forth row
             + class_loss  # fifth row
+        )
+        print(
+            f"{box_loss.item()=}, {object_loss.item()=}, {no_object_loss.item()=}, {class_loss.item()=}"
         )
         if get_avg_iou:
             avg_iou = (
@@ -361,14 +376,14 @@ def greedy_iou_box_selection(pred, target, get_avg_iou=False):
             ..., 1:5
         ],  # [..., num_boxes, 4] shape
         midpoint=True,
-    )
+    ).detach()
     # ious should be (batch_size, grid_dim, grid_dim, num_bboxes)
     # selects the best box based on max iou;
     if not get_avg_iou:
         bestbox = ious.argmax(-1)
     else:
         vals, bestbox = ious.max(-1)
-    bestbox = pred.reshape(-1, num_boxes, out_channels)[
+    bestbox = pred.view(-1, num_boxes, out_channels)[
         [torch.arange(batch_size * grid_dim * grid_dim), bestbox.view(-1)]
     ].view(batch_size, grid_dim, grid_dim, -1)
     if get_avg_iou:
@@ -389,8 +404,8 @@ def greedy_confidence_box_selection(label_matrices: torch.Tensor, num_boxes):
     batch_size, grid_dim, _, out_channels = label_matrices.shape
     box_dim = out_channels // num_boxes
     assert num_boxes * box_dim == out_channels
-    label_matrices = label_matrices.reshape(-1, num_boxes, box_dim)
-    idxs = label_matrices[..., 0].argmax(-1)
+    label_matrices = label_matrices.view(-1, num_boxes, box_dim)
+    idxs = label_matrices[..., 0].argmax(-1).detach()
     label_matrices = label_matrices[
         [torch.arange(batch_size * grid_dim * grid_dim), idxs.view(-1)]
     ].view(batch_size, grid_dim, grid_dim, -1)
